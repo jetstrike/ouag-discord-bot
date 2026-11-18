@@ -231,9 +231,9 @@ function createMatchResultsEmbed(tournament, roundNumber, podNumber, resultsWith
     const isMock = !/^\d{17,20}$/.test(res.user_id);
     const userDisplay = isMock ? `**${res.username}**` : `<@${res.user_id}> (${res.username})`;
     if (isFinals) {
-      return `${medal} ${userDisplay} — **+${res.finals_points_awarded || res.points} Finals pts** (Rank ${res.placement})`;
+      return `${medal} ${userDisplay} — **+${res.finals_points_awarded ?? res.points ?? 0} Finals pts** (Rank ${res.placement})`;
     } else {
-      return `${medal} ${userDisplay} — **+${res.points_awarded || res.points} Swiss** | **+${res.carry_over_awarded || 0} Carry-Over** (Rank ${res.placement})`;
+      return `${medal} ${userDisplay} — **+${res.points_awarded ?? res.points ?? 0} Swiss** | **+${res.carry_over_awarded ?? 0} Carry-Over** (Rank ${res.placement})`;
     }
   });
 

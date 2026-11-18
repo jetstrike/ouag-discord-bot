@@ -200,10 +200,11 @@ async function handleSlashCommand(interaction) {
 
     if (sub === 'setup') {
       const hasPerms = 
-        !interaction.memberPermissions ||
-        interaction.memberPermissions.has(PermissionFlagsBits.ManageChannels) ||
-        interaction.memberPermissions.has(PermissionFlagsBits.ManageGuild) ||
-        interaction.memberPermissions.has(PermissionFlagsBits.Administrator) ||
+        Boolean(
+          interaction.memberPermissions?.has(PermissionFlagsBits.ManageChannels) ||
+          interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ||
+          interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)
+        ) ||
         guild.ownerId === interaction.user.id;
 
       if (!hasPerms) {
@@ -286,9 +287,9 @@ async function handleSlashCommand(interaction) {
       let targetTourney = null;
       if (explicitId) {
         targetTourney = await queries.getTournamentById(explicitId);
-        if (!targetTourney) {
+        if (!targetTourney || targetTourney.guild_id !== guild.id) {
           return interaction.reply({
-            content: `❌ Tournament with ID #${explicitId} was not found.`,
+            content: `❌ Tournament with ID #${explicitId} was not found in this server.`,
             flags: MessageFlags.Ephemeral
           });
         }
@@ -409,6 +410,12 @@ async function handleSlashCommand(interaction) {
         return interaction.reply({ content: '⚠️ Only Coordinators can execute cut lines.', flags: MessageFlags.Ephemeral });
       }
       const cutCount = options.getInteger('count');
+      if (!Number.isInteger(cutCount) || cutCount <= 0) {
+        return interaction.reply({
+          content: '⚠️ Cut count must be a positive integer greater than 0.',
+          flags: MessageFlags.Ephemeral
+        });
+      }
       const eliminated = await queries.eliminateBottomThird(activeTourney.id, cutCount);
       return interaction.reply({
         content: `✅ Eliminated ${eliminated.length} players from the tournament according to Swiss standings.`

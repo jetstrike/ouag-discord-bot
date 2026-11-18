@@ -393,6 +393,18 @@ async function runTests() {
   assert.strictEqual(issues.length, 0, 'Issue channels table should be cleared on cancelTournament');
   console.log('  ✅ Tournament cleanup & issue tracking verified.');
 
+  // Verify Match Results embed handles 0 points without 'undefined'
+  const resultsEmbed = embeds.createMatchResultsEmbed(
+    { id: 101, name: 'Test Tourney' },
+    1,
+    1,
+    [{ user_id: 'u6', username: 'P6', placement: 6, points_awarded: 0, carry_over_awarded: 0 }],
+    false,
+    null
+  );
+  assert(resultsEmbed.data.description.includes('+0 Swiss'), '6th place 0-point result must display +0 Swiss');
+  assert(!resultsEmbed.data.description.includes('undefined'), 'Results embed must never contain undefined');
+
   console.log('\n======================================================');
   console.log('🎉 ALL TESTS PASSED! FULL CHEKHOV’S GUM FORMAT VERIFIED!');
   console.log('======================================================\n');

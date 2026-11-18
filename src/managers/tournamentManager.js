@@ -298,7 +298,10 @@ async function handlePlayerReportPlacement(interaction, podId, placement) {
   // Check if all players in pod have reported
   const reportedCount = updatedPlayers.filter(p => p.placement !== null).length;
   if (reportedCount === players.length) {
-    await finalizePodResults(interaction.guild, pod, updatedPlayers, round, tournament);
+    const targetGuild = interaction.guild || (interaction.guildId ? await interaction.client.guilds.fetch(interaction.guildId).catch(() => null) : null);
+    if (targetGuild) {
+      await finalizePodResults(targetGuild, pod, updatedPlayers, round, tournament);
+    }
   }
 }
 
@@ -306,10 +309,15 @@ async function handlePlayerReportPlacement(interaction, podId, placement) {
  * Finalizes results for a pod when all players have reported or coordinator overrides.
  */
 async function finalizePodResults(guild, pod, players, round, tournament) {
+  const currentPod = await queries.getPodById(pod.id);
+  if (!currentPod || currentPod.status === 'completed') {
+    return;
+  }
+
   const placements = players.map(p => p.placement);
   const validation = scoring.validatePlacements(placements, players.length);
 
-  const channel = await guild.channels.fetch(pod.channel_id).catch(() => null);
+  const channel = guild ? await guild.channels.fetch(pod.channel_id).catch(() => null) : null;
 
   if (!validation.valid) {
     if (channel) {
@@ -513,6 +521,7 @@ async function handleRoundCompletion(guild, tournament, round, isFinals, champio
  */
 async function rulePodStuck(guild, podId, remainingPlayerIds) {
   const pod = await queries.getPodById(podId);
+  if (!pod) throw new Error(`Pod #${podId} not found.`);
   const tournament = await queries.getTournamentById(pod.tournament_id);
   const round = await queries.getRoundById(pod.round_id);
   const allPlayers = await queries.getPodPlayers(podId);
@@ -532,6 +541,7 @@ async function rulePodStuck(guild, podId, remainingPlayerIds) {
 
   // Mark pod status as stuck so no champion is crowned from it (Rule E.5)
   await queries.run(`UPDATE tournament_pods SET status = 'stuck' WHERE id = ?`, [podId]);
+  pod.status = 'stuck';
   await finalizePodResults(guild, pod, allPlayers, round, tournament);
 }
 
@@ -540,6 +550,7 @@ async function rulePodStuck(guild, podId, remainingPlayerIds) {
  */
 async function voidPodReplay(guild, podId) {
   const pod = await queries.getPodById(podId);
+  if (!pod) throw new Error(`Pod #${podId} not found.`);
   await queries.voidPodMatch(podId);
 
   const channel = await guild.channels.fetch(pod.channel_id).catch(() => null);
@@ -556,6 +567,7 @@ async function voidPodReplay(guild, podId) {
  */
 async function ruleCrashTwoPlayers(guild, podId, player1Id, player2Id) {
   const pod = await queries.getPodById(podId);
+  if (!pod) throw new Error(`Pod #${podId} not found.`);
   const tournament = await queries.getTournamentById(pod.tournament_id);
   const round = await queries.getRoundById(pod.round_id);
   const allPlayers = await queries.getPodPlayers(podId);

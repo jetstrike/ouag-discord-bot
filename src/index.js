@@ -76,7 +76,7 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.customId.startsWith('casual_')) {
         return await handleCasualButton(interaction);
       }
-      if (interaction.customId.startsWith('tourney_') || interaction.customId.startsWith('pod_')) {
+      if (interaction.customId.startsWith('tourney_') || interaction.customId.startsWith('pod_') || interaction.customId.startsWith('issue_')) {
         return await handleTournamentButton(interaction);
       }
     }

@@ -11,6 +11,7 @@ const {
 
 const queries = require('../database/queries');
 const embeds = require('../utils/embeds');
+const scoring = require('../utils/scoring');
 const tournamentManager = require('../managers/tournamentManager');
 const channelManager = require('../managers/channelManager');
 
@@ -95,6 +96,9 @@ async function handleTournamentButton(interaction) {
   if (customId.startsWith('pod_simulate_')) {
     const podId = parseInt(customId.replace('pod_simulate_', ''), 10);
     const pod = await queries.getPodById(podId);
+    if (!pod) {
+      return interaction.reply({ content: '⚠️ Pod not found.', flags: MessageFlags.Ephemeral });
+    }
     const tournament = await queries.getTournamentById(pod.tournament_id);
 
     if (!tournamentManager.isCoordinator(interaction.member, tournament, interaction)) {
@@ -155,6 +159,9 @@ async function handleTournamentButton(interaction) {
   if (customId.startsWith('pod_override_')) {
     const podId = customId.replace('pod_override_', '');
     const pod = await queries.getPodById(podId);
+    if (!pod) {
+      return interaction.reply({ content: '⚠️ Pod not found.', flags: MessageFlags.Ephemeral });
+    }
     const tournament = await queries.getTournamentById(pod.tournament_id);
 
     if (!tournamentManager.isCoordinator(interaction.member, tournament, interaction)) {
@@ -245,11 +252,13 @@ async function handleTournamentButton(interaction) {
 
     await queries.unregisterParticipant(tournamentId, interaction.user.id);
 
+    const targetGuild = interaction.guild || (interaction.guildId ? await interaction.client.guilds.fetch(interaction.guildId).catch(() => null) : null);
+
     // If dropped from a pod:
     if (podId > 0) {
       const pod = await queries.getPodById(podId);
-      if (pod && pod.channel_id) {
-        const podRoom = await interaction.guild.channels.fetch(pod.channel_id).catch(() => null);
+      if (pod && pod.channel_id && targetGuild) {
+        const podRoom = await targetGuild.channels.fetch(pod.channel_id).catch(() => null);
         if (podRoom) {
           await podRoom.send({
             content: `🚪 <@${interaction.user.id}> has dropped from the tournament.`
@@ -271,10 +280,10 @@ async function handleTournamentButton(interaction) {
       }
     } else {
       // If dropped via standings, check if they are currently in an active pod
-      if (tournament.current_round > 0) {
+      if (tournament.current_round > 0 && targetGuild) {
         const activePod = await queries.getActivePodForPlayer(tournamentId, tournament.current_round, interaction.user.id);
         if (activePod && activePod.channel_id) {
-          const podRoom = await interaction.guild.channels.fetch(activePod.channel_id).catch(() => null);
+          const podRoom = await targetGuild.channels.fetch(activePod.channel_id).catch(() => null);
           if (podRoom) {
             await podRoom.send({
               content: `🚪 <@${interaction.user.id}> has dropped from the tournament.`
@@ -373,13 +382,28 @@ async function handleTournamentModal(interaction) {
     const ranks = rawInput.trim().split(/\s+/).map(Number);
 
     const pod = await queries.getPodById(podId);
+    if (!pod) {
+      return interaction.reply({ content: '⚠️ Pod not found.', flags: MessageFlags.Ephemeral });
+    }
     const players = await queries.getPodPlayers(podId);
     const round = await queries.getRoundById(pod.round_id);
     const tournament = await queries.getTournamentById(pod.tournament_id);
 
-    if (ranks.length !== players.length) {
+    if (!tournamentManager.isCoordinator(interaction.member, tournament, interaction)) {
+      return interaction.reply({ content: '⚠️ Only Tournament Coordinators can override match placements.', flags: MessageFlags.Ephemeral });
+    }
+
+    if (ranks.some(r => !Number.isInteger(r))) {
       return interaction.reply({
-        content: `❌ You provided ${ranks.length} ranks, but there are ${players.length} players.`,
+        content: '❌ Placements must be whole numbers separated by spaces (e.g. `1 2 3 4 5 6`).',
+        flags: MessageFlags.Ephemeral
+      });
+    }
+
+    const validation = scoring.validatePlacements(ranks, players.length);
+    if (!validation.valid) {
+      return interaction.reply({
+        content: `❌ ${validation.error}`,
         flags: MessageFlags.Ephemeral
       });
     }
