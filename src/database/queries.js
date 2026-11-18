@@ -73,6 +73,16 @@ async function markCasualLobbyStarted(lobbyId) {
   );
 }
 
+async function claimCasualLobbyStart(lobbyId) {
+  const res = await db.run(
+    `UPDATE casual_lobbies 
+     SET status = 'started', started_at = CURRENT_TIMESTAMP 
+     WHERE id = ? AND status IN ('waiting', 'ready')`,
+    [lobbyId]
+  );
+  return res.changes > 0;
+}
+
 // --- Tournaments ---
 
 async function createTournament({ 
@@ -147,19 +157,20 @@ async function updateTournamentPoints(tournamentId, pointsArray) {
 }
 
 async function registerParticipant(tournamentId, userId, username) {
-  try {
-    await db.run(
-      `INSERT INTO tournament_participants (tournament_id, user_id, username, status) VALUES (?, ?, ?, 'registered')`,
-      [tournamentId, userId, username]
-    );
-    return true;
-  } catch (err) {
+  const existing = await getParticipant(tournamentId, userId);
+  if (existing) {
     const res = await db.run(
       `UPDATE tournament_participants SET status = 'registered', username = ? WHERE tournament_id = ? AND user_id = ?`,
       [username, tournamentId, userId]
     );
     return res.changes > 0;
   }
+
+  await db.run(
+    `INSERT INTO tournament_participants (tournament_id, user_id, username, status) VALUES (?, ?, ?, 'registered')`,
+    [tournamentId, userId, username]
+  );
+  return true;
 }
 
 async function unregisterParticipant(tournamentId, userId) {
@@ -335,6 +346,14 @@ async function markPodCompleted(podId) {
   );
 }
 
+async function claimPodCompletion(podId) {
+  const res = await db.run(
+    `UPDATE tournament_pods SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ? AND status != 'completed'`,
+    [podId]
+  );
+  return res.changes > 0;
+}
+
 async function voidPodMatch(podId) {
   await db.run(`UPDATE tournament_pods SET status = 'waiting_code', lobby_code = NULL WHERE id = ?`, [podId]);
   await db.run(`UPDATE tournament_pod_players SET placement = NULL, points_awarded = 0, carry_over_awarded = 0, finals_points_awarded = 0 WHERE pod_id = ?`, [podId]);
@@ -467,6 +486,7 @@ module.exports = {
   getCasualPlayers,
   setCasualLobbyCode,
   markCasualLobbyStarted,
+  claimCasualLobbyStart,
 
   // Tournament
   createTournament,
@@ -499,6 +519,7 @@ module.exports = {
   markPodStarted,
   setPodPlayerPlacement,
   markPodCompleted,
+  claimPodCompletion,
   voidPodMatch,
   recordMatchup,
   getMatchupHistory,

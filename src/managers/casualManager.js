@@ -167,8 +167,11 @@ async function handleStartMatch(interaction, lobbyId) {
     });
   }
 
-  // Mark started in database
-  await queries.markCasualLobbyStarted(lobbyId);
+  // Atomically claim match start so simultaneous clicks cannot double-launch
+  const claimed = await queries.claimCasualLobbyStart(lobbyId);
+  if (!claimed) {
+    return interaction.reply({ content: '⚠️ This match has already started!', flags: MessageFlags.Ephemeral });
+  }
 
   // Hide the queue message as requested
   try {

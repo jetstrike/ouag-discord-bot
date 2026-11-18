@@ -5,12 +5,10 @@ const { commands, handleSlashCommand } = require('./commands/slashCommands');
 const { handleCasualButton, handleCasualModal } = require('./interactions/casualHandlers');
 const { handleTournamentButton, handleTournamentModal } = require('./interactions/tournamentHandlers');
 
-// Initialize Discord Client
+// Initialize Discord Client (only Guilds intent needed for Slash Commands, Buttons, and Modals)
 const client = new Client({
   intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.Guilds
   ]
 });
 

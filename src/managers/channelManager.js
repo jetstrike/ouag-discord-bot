@@ -2,6 +2,48 @@ const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const queries = require('../database/queries');
 
 /**
+ * Adds the tournament creator, guild owner, and cached coordinator role members to a private thread.
+ */
+async function addStaffToThread(thread, guild, tournament) {
+  if (tournament.created_by && /^\d{17,20}$/.test(tournament.created_by)) {
+    await thread.members.add(tournament.created_by).catch(() => null);
+  }
+  if (guild.ownerId && /^\d{17,20}$/.test(guild.ownerId)) {
+    await thread.members.add(guild.ownerId).catch(() => null);
+  }
+  if (tournament.coordinator_role_id) {
+    try {
+      const role = guild.roles.cache.get(tournament.coordinator_role_id) || await guild.roles.fetch(tournament.coordinator_role_id).catch(() => null);
+      if (role?.members) {
+        for (const [mId] of role.members) {
+          await thread.members.add(mId).catch(() => null);
+        }
+      }
+    } catch (err) {}
+  }
+}
+
+/**
+ * Deletes tournament pod/issue threads from a fetched thread collection, returning deleted count.
+ */
+async function deleteMatchingThreads(threadCollection, deletedIds) {
+  let deleted = 0;
+  if (!threadCollection) return deleted;
+  for (const [tId, thread] of threadCollection) {
+    if (deletedIds.has(tId)) continue;
+    const name = thread.name.toLowerCase();
+    if (name.startsWith('pod-') || name.startsWith('issue-') || name === 'grand-finals') {
+      try {
+        await thread.delete('Tournament cleanup');
+        deleted++;
+        deletedIds.add(tId);
+      } catch (err) {}
+    }
+  }
+  return deleted;
+}
+
+/**
  * Creates either a dedicated private text channel or a private thread for a pod of 6 players.
  * 
  * @param {import('discord.js').Guild} guild 
@@ -42,31 +84,7 @@ async function createPodRoom(guild, tournament, pod, roundNumber, isFinals, play
       }
     }
 
-    // Always add the tournament creator/coordinator to every thread
-    if (tournament.created_by && /^\d{17,20}$/.test(tournament.created_by)) {
-      try {
-        await thread.members.add(tournament.created_by);
-      } catch (err) {}
-    }
-
-    // Always add server owner to every thread
-    if (guild.ownerId && /^\d{17,20}$/.test(guild.ownerId)) {
-      try {
-        await thread.members.add(guild.ownerId);
-      } catch (err) {}
-    }
-
-    // Add all members with coordinator role to the thread using role cache
-    if (tournament.coordinator_role_id) {
-      try {
-        const role = guild.roles.cache.get(tournament.coordinator_role_id) || await guild.roles.fetch(tournament.coordinator_role_id).catch(() => null);
-        if (role && role.members) {
-          for (const [mId] of role.members) {
-            await thread.members.add(mId).catch(() => null);
-          }
-        }
-      } catch (err) {}
-    }
+    await addStaffToThread(thread, guild, tournament);
 
     return thread;
   } else {
@@ -214,22 +232,7 @@ async function createIssueChannel(guild, tournament, user) {
     });
 
     await thread.members.add(user.id).catch(() => null);
-    if (tournament.created_by && /^\d{17,20}$/.test(tournament.created_by)) {
-      await thread.members.add(tournament.created_by).catch(() => null);
-    }
-    if (guild.ownerId && /^\d{17,20}$/.test(guild.ownerId)) {
-      await thread.members.add(guild.ownerId).catch(() => null);
-    }
-    if (tournament.coordinator_role_id) {
-      try {
-        const role = guild.roles.cache.get(tournament.coordinator_role_id) || await guild.roles.fetch(tournament.coordinator_role_id).catch(() => null);
-        if (role && role.members) {
-          for (const [mId] of role.members) {
-            await thread.members.add(mId).catch(() => null);
-          }
-        }
-      } catch (err) {}
-    }
+    await addStaffToThread(thread, guild, tournament);
 
     await queries.recordIssueChannel(tournament.id, thread.id, user.id);
     return { channel: thread, isExisting: false };
@@ -429,34 +432,10 @@ async function cleanupTournamentChannels(guild, tournament, options = {}) {
       const parentChannel = await guild.channels.fetch(tournament.tournament_channel_id).catch(() => null);
       if (parentChannel && parentChannel.threads) {
         const active = await parentChannel.threads.fetchActive().catch(() => null);
-        if (active?.threads) {
-          for (const [tId, thread] of active.threads) {
-            if (deletedIds.has(tId)) continue;
-            const name = thread.name.toLowerCase();
-            if (name.startsWith('pod-') || name.startsWith('issue-') || name === 'grand-finals') {
-              try {
-                await thread.delete('Tournament cleanup');
-                result.deletedThreads++;
-                deletedIds.add(tId);
-              } catch (err) {}
-            }
-          }
-        }
+        result.deletedThreads += await deleteMatchingThreads(active?.threads, deletedIds);
 
         const archived = await parentChannel.threads.fetchArchived().catch(() => null);
-        if (archived?.threads) {
-          for (const [tId, thread] of archived.threads) {
-            if (deletedIds.has(tId)) continue;
-            const name = thread.name.toLowerCase();
-            if (name.startsWith('pod-') || name.startsWith('issue-') || name === 'grand-finals') {
-              try {
-                await thread.delete('Tournament cleanup');
-                result.deletedThreads++;
-                deletedIds.add(tId);
-              } catch (err) {}
-            }
-          }
-        }
+        result.deletedThreads += await deleteMatchingThreads(archived?.threads, deletedIds);
       }
     } catch (err) {}
   }

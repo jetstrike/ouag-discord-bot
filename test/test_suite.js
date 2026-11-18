@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 process.env.USE_TIDB = 'false';
+process.env.SQLITE_PATH = ':memory:';
 
 const db = require('../src/database/db');
 const queries = require('../src/database/queries');
@@ -48,8 +49,11 @@ async function runTests() {
   assert.strictEqual(lobby.lobby_code, '7K2N');
   assert.strictEqual(lobby.status, 'ready');
 
-  // Start match
-  await queries.markCasualLobbyStarted(lobbyId);
+  // Start match (atomic claim prevents double-start race)
+  const firstClaim = await queries.claimCasualLobbyStart(lobbyId);
+  const secondClaim = await queries.claimCasualLobbyStart(lobbyId);
+  assert.strictEqual(firstClaim, true, 'First start claim should succeed');
+  assert.strictEqual(secondClaim, false, 'Concurrent second start claim must fail');
   lobby = await queries.getCasualLobbyById(lobbyId);
   assert.strictEqual(lobby.status, 'started');
   console.log('  ✅ Casual lobby operations verified.');
@@ -404,6 +408,11 @@ async function runTests() {
   );
   assert(resultsEmbed.data.description.includes('+0 Swiss'), '6th place 0-point result must display +0 Swiss');
   assert(!resultsEmbed.data.description.includes('undefined'), 'Results embed must never contain undefined');
+
+  // Verify atomic pod completion claim prevents double-scoring
+  const podTestId = await queries.createPod(1, 999, 1, 'leader_1');
+  assert.strictEqual(await queries.claimPodCompletion(podTestId), true, 'First pod completion claim should succeed');
+  assert.strictEqual(await queries.claimPodCompletion(podTestId), false, 'Duplicate pod completion claim must fail');
 
   console.log('\n======================================================');
   console.log('🎉 ALL TESTS PASSED! FULL CHEKHOV’S GUM FORMAT VERIFIED!');

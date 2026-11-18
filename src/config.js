@@ -7,9 +7,9 @@ module.exports = {
   GUILD_ID: process.env.GUILD_ID || '', // Optional: for instant guild slash command registration in development
 
   // Database Configuration
-  // If USE_TIDB is true (or TIDB_HOST is provided), connect to TiDB/MySQL via mysql2.
-  // Otherwise, default to local SQLite (better-sqlite3) for zero-setup instant operation.
-  USE_TIDB: process.env.USE_TIDB === 'true' || Boolean(process.env.TIDB_HOST),
+  // If USE_TIDB is 'true' (or unset with TIDB_HOST provided), connect to TiDB/MySQL via mysql2.
+  // Explicit USE_TIDB=false always forces local SQLite even if TIDB_HOST is set.
+  USE_TIDB: process.env.USE_TIDB === 'true' || (process.env.USE_TIDB !== 'false' && Boolean(process.env.TIDB_HOST)),
   TIDB: {
     host: process.env.TIDB_HOST || 'localhost',
     port: parseInt(process.env.TIDB_PORT || '4000', 10),

@@ -431,6 +431,10 @@ async function handleSlashCommand(interaction) {
       const p2 = options.getUser('player2');
 
       await interaction.deferReply();
+      const targetPod = await queries.getPodById(podId);
+      if (!targetPod || targetPod.tournament_id !== activeTourney.id) {
+        return await interaction.editReply(`❌ Pod #${podId} does not belong to **${activeTourney.name}**.`);
+      }
       await tournamentManager.rulePodStuck(guild, podId, [p1.id, p2.id]);
       return await interaction.editReply(`⚖️ **Stuck Lobby Ruling Applied**: Pod #${podId} remaining players (<@${p1.id}>, <@${p2.id}>) awarded split 1st place points. Neither player may win tournament from this lobby.`);
     }
@@ -441,6 +445,10 @@ async function handleSlashCommand(interaction) {
       }
       const podId = options.getInteger('pod_id');
       await interaction.deferReply();
+      const targetPod = await queries.getPodById(podId);
+      if (!targetPod || targetPod.tournament_id !== activeTourney.id) {
+        return await interaction.editReply(`❌ Pod #${podId} does not belong to **${activeTourney.name}**.`);
+      }
       await tournamentManager.voidPodReplay(guild, podId);
       return await interaction.editReply(`🔄 **Crash Replay Ruling Applied**: Pod #${podId} voided for replay. A new 4-character lobby code may be submitted.`);
     }
@@ -454,6 +462,10 @@ async function handleSlashCommand(interaction) {
       const p2 = options.getUser('player2');
 
       await interaction.deferReply();
+      const targetPod = await queries.getPodById(podId);
+      if (!targetPod || targetPod.tournament_id !== activeTourney.id) {
+        return await interaction.editReply(`❌ Pod #${podId} does not belong to **${activeTourney.name}**.`);
+      }
       await tournamentManager.ruleCrashTwoPlayers(guild, podId, p1.id, p2.id);
       return await interaction.editReply(`⚖️ **Two Players Remaining Crash Ruling**: Pod #${podId} concluded with <@${p1.id}> and <@${p2.id}> tied for 1st & 2nd.`);
     }

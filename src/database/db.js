@@ -37,14 +37,19 @@ async function initDb() {
 
 function initSqlite() {
   const Database = require('better-sqlite3');
-  const dataDir = path.join(__dirname, '../../data');
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+  let dbPath = process.env.SQLITE_PATH;
+  if (!dbPath) {
+    const dataDir = path.join(__dirname, '../../data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    dbPath = path.join(dataDir, 'ouag_bot.db');
   }
-  const dbPath = path.join(dataDir, 'ouag_bot.db');
   console.log(`[Database] Initializing local SQLite database at ${dbPath}`);
   sqliteDb = new Database(dbPath);
-  sqliteDb.pragma('journal_mode = WAL');
+  if (dbPath !== ':memory:') {
+    sqliteDb.pragma('journal_mode = WAL');
+  }
   createTablesSqlite();
 }
 

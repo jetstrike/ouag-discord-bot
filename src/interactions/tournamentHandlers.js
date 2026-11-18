@@ -15,6 +15,31 @@ const scoring = require('../utils/scoring');
 const tournamentManager = require('../managers/tournamentManager');
 const channelManager = require('../managers/channelManager');
 
+/**
+ * Announces a player drop inside their pod room and reassigns Lobby Leader if needed.
+ */
+async function notifyPodOfDrop(guild, pod, userId) {
+  if (!guild || !pod || !pod.channel_id) return;
+  const podRoom = await guild.channels.fetch(pod.channel_id).catch(() => null);
+  if (!podRoom) return;
+
+  await podRoom.send({
+    content: `🚪 <@${userId}> has dropped from the tournament.`
+  }).catch(() => null);
+
+  if (pod.leader_user_id === userId) {
+    const podPlayers = await queries.getPodPlayers(pod.id);
+    const remaining = podPlayers.filter(p => p.user_id !== userId);
+    if (remaining.length > 0) {
+      const newLeader = remaining[0];
+      await queries.updatePodLeader(pod.id, newLeader.user_id);
+      await podRoom.send({
+        content: `👑 <@${newLeader.user_id}> is now the new **Lobby Leader** for this match.`
+      }).catch(() => null);
+    }
+  }
+}
+
 async function handleTournamentButton(interaction) {
   const customId = interaction.customId;
 
@@ -254,55 +279,13 @@ async function handleTournamentButton(interaction) {
 
     const targetGuild = interaction.guild || (interaction.guildId ? await interaction.client.guilds.fetch(interaction.guildId).catch(() => null) : null);
 
-    // If dropped from a pod:
+    // Notify pod room and reassign leader if needed
     if (podId > 0) {
       const pod = await queries.getPodById(podId);
-      if (pod && pod.channel_id && targetGuild) {
-        const podRoom = await targetGuild.channels.fetch(pod.channel_id).catch(() => null);
-        if (podRoom) {
-          await podRoom.send({
-            content: `🚪 <@${interaction.user.id}> has dropped from the tournament.`
-          }).catch(() => null);
-
-          // If dropping player was the leader, reassign leader
-          if (pod.leader_user_id === interaction.user.id) {
-            const podPlayers = await queries.getPodPlayers(podId);
-            const remaining = podPlayers.filter(p => p.user_id !== interaction.user.id);
-            if (remaining.length > 0) {
-              const newLeader = remaining[0];
-              await queries.updatePodLeader(podId, newLeader.user_id);
-              await podRoom.send({
-                content: `👑 <@${newLeader.user_id}> is now the new **Lobby Leader** for this match.`
-              }).catch(() => null);
-            }
-          }
-        }
-      }
-    } else {
-      // If dropped via standings, check if they are currently in an active pod
-      if (tournament.current_round > 0 && targetGuild) {
-        const activePod = await queries.getActivePodForPlayer(tournamentId, tournament.current_round, interaction.user.id);
-        if (activePod && activePod.channel_id) {
-          const podRoom = await targetGuild.channels.fetch(activePod.channel_id).catch(() => null);
-          if (podRoom) {
-            await podRoom.send({
-              content: `🚪 <@${interaction.user.id}> has dropped from the tournament.`
-            }).catch(() => null);
-
-            if (activePod.leader_user_id === interaction.user.id) {
-              const podPlayers = await queries.getPodPlayers(activePod.id);
-              const remaining = podPlayers.filter(p => p.user_id !== interaction.user.id);
-              if (remaining.length > 0) {
-                const newLeader = remaining[0];
-                await queries.updatePodLeader(activePod.id, newLeader.user_id);
-                await podRoom.send({
-                  content: `👑 <@${newLeader.user_id}> is now the new **Lobby Leader** for this match.`
-                }).catch(() => null);
-              }
-            }
-          }
-        }
-      }
+      await notifyPodOfDrop(targetGuild, pod, interaction.user.id);
+    } else if (tournament.current_round > 0) {
+      const activePod = await queries.getActivePodForPlayer(tournamentId, tournament.current_round, interaction.user.id);
+      await notifyPodOfDrop(targetGuild, activePod, interaction.user.id);
     }
 
     return interaction.update({

@@ -309,11 +309,6 @@ async function handlePlayerReportPlacement(interaction, podId, placement) {
  * Finalizes results for a pod when all players have reported or coordinator overrides.
  */
 async function finalizePodResults(guild, pod, players, round, tournament) {
-  const currentPod = await queries.getPodById(pod.id);
-  if (!currentPod || currentPod.status === 'completed') {
-    return;
-  }
-
   const placements = players.map(p => p.placement);
   const validation = scoring.validatePlacements(placements, players.length);
 
@@ -326,6 +321,12 @@ async function finalizePodResults(guild, pod, players, round, tournament) {
                  `Please review your submitted placements or have a Tournament Coordinator use the **Coordinator Override** button.`
       });
     }
+    return;
+  }
+
+  // Atomically claim pod completion to prevent concurrent submissions from double-scoring
+  const claimed = await queries.claimPodCompletion(pod.id);
+  if (!claimed) {
     return;
   }
 
@@ -376,7 +377,6 @@ async function finalizePodResults(guild, pod, players, round, tournament) {
     }
   }
 
-  await queries.markPodCompleted(pod.id);
   const finalPod = await queries.getPodById(pod.id);
   const finalPlayers = await queries.getPodPlayers(pod.id);
 
