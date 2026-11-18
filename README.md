@@ -68,8 +68,8 @@ A Discord bot designed specifically for **Once Upon a Galaxy (OUAG)**. It automa
 ---
 
 ## 🗄️ Dual Database Support (Local SQLite or TiDB/MySQL)
-* **Zero-Setup Local**: Runs right out of the box using embedded SQLite (`data/ouag_bot.db`).
-* **24/7 Cloud TiDB / MySQL**: Ready to connect to your TiDB Cloud database simply by setting `USE_TIDB=true` in `.env`.
+* **Zero-Setup Local SQLite (Default):** Leave `USE_TIDB=false` in `.env`. On first startup, the bot automatically creates `data/ouag_bot.db` and initializes all tables—no external database setup required.
+* **Cloud TiDB / MySQL (Optional):** Recommended only if deploying on ephemeral cloud containers that reset local files on restart. Create an empty database/cluster, set `USE_TIDB=true` with your credentials in `.env`, and the bot will create all tables automatically on startup.
 
 ---
 
@@ -80,10 +80,7 @@ A Discord bot designed specifically for **Once Upon a Galaxy (OUAG)**. It automa
 2. Click **New Application**, name it (e.g. `OUAG Lobby Organizer`), and click **Create**.
 3. Under **Bot**:
    * Click **Reset Token** and copy your **Bot Token**.
-   * Under **Privileged Gateway Intents**, enable:
-     * ✅ **Server Members Intent**
-     * ✅ **Message Content Intent**
-   * Click **Save Changes**.
+   * **No Privileged Gateway Intents are required** (leave *Presence*, *Server Members*, and *Message Content* off—the bot uses Discord Interactions only).
 4. Under **OAuth2** > **URL Generator**:
    * Scopes: `bot`, `applications.commands`.
    * Bot Permissions: `Administrator` (or `Manage Channels`, `Manage Roles`, `View Channels`, `Send Messages`, `Manage Messages`, `Create Private Threads`, `Embed Links`).
@@ -92,20 +89,26 @@ A Discord bot designed specifically for **Once Upon a Galaxy (OUAG)**. It automa
 
 ---
 
-### Step 2: Configure `.env`
+### Step 2: Clone, Install & Configure `.env`
 
-Copy `.env.example` to `.env`:
+```bash
+git clone https://github.com/jetstrike/ouag-discord-bot.git
+cd ouag-discord-bot
+npm install
+```
+
+Copy `.env.example` to `.env` and add your Discord credentials (`DISCORD_TOKEN` and `CLIENT_ID`):
 ```ini
 DISCORD_TOKEN=your_bot_token_here
 CLIENT_ID=your_client_id_here
-GUILD_ID=your_optional_server_id_here
+GUILD_ID=
 
-# SQLite (default) or TiDB Cloud:
+# SQLite (default, zero setup) or TiDB Cloud / MySQL:
 USE_TIDB=false
 # TIDB_HOST=gateway01.us-east-1.prod.aws.tidbcloud.com
 # TIDB_PORT=4000
-# TIDB_USER=your_username
-# TIDB_PASSWORD=your_password
+# TIDB_USER=your_username_here
+# TIDB_PASSWORD=your_password_here
 # TIDB_DATABASE=ouag_lobbies
 # TIDB_SSL=true
 ```
@@ -115,7 +118,7 @@ USE_TIDB=false
 ### Step 3: Run Tests & Start
 
 ```bash
-# Run automated verification suite
+# Run automated verification suite (uses isolated in-memory SQLite)
 npm test
 
 # Start bot locally
@@ -125,6 +128,12 @@ npm start
 npm run pm2:start
 npm run pm2:logs
 ```
+
+---
+
+## 🔒 Privacy Policy
+
+See [`PRIVACY_POLICY.md`](./PRIVACY_POLICY.md) for details on what Discord and tournament data the bot stores, how it is used, and how to delete it.
 
 ---
 

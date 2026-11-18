@@ -1,0 +1,200 @@
+const queries = require('../database/queries');
+const embeds = require('../utils/embeds');
+const swissPairing = require('./swissPairing');
+const channelManager = require('./channelManager');
+const config = require('../config');
+
+/**
+ * Starts a new Swiss Round (Rounds 1 through 4).
+ */
+async function startRound(guild, tournamentId) {
+  const tournament = await queries.getTournamentById(tournamentId);
+  if (!tournament) throw new Error('Tournament not found.');
+
+  if (tournament.stage === 'finals') {
+    throw new Error('Tournament is currently in Finals stage. Use /tournament next-finals-round to launch a Finals match.');
+  }
+
+  const nextRoundNumber = tournament.current_round + 1;
+  if (nextRoundNumber > config.TOURNAMENT_RULES.SWISS_ROUNDS) {
+    throw new Error(`All ${config.TOURNAMENT_RULES.SWISS_ROUNDS} Swiss rounds have concluded. Use /tournament start-finals to start the Finals.`);
+  }
+
+  const participants = await queries.getParticipants(tournamentId, true);
+  if (participants.length < config.MIN_LOBBY_SIZE) {
+    throw new Error(`Need at least ${config.MIN_LOBBY_SIZE} registered players to start a round. Currently active: ${participants.length}.`);
+  }
+
+  const roundId = await queries.createRound(tournamentId, nextRoundNumber, 0);
+  await queries.updateTournamentCurrentRound(tournamentId, nextRoundNumber);
+  await queries.updateTournamentStatus(tournamentId, 'in_progress');
+  await queries.updateTournamentStage(tournamentId, 'swiss');
+
+  const matchupHistory = await queries.getMatchupHistory(tournamentId);
+  const podGroups = swissPairing.generatePods(participants, nextRoundNumber, false, matchupHistory);
+  const createdPods = [];
+
+  for (let podIndex = 0; podIndex < podGroups.length; podIndex++) {
+    const podPlayers = podGroups[podIndex];
+    const podNumber = podIndex + 1;
+    const leader = podPlayers[Math.floor(Math.random() * podPlayers.length)];
+
+    const podId = await queries.createPod(roundId, tournamentId, podNumber, leader.user_id);
+
+    for (const p of podPlayers) {
+      await queries.addPodPlayer(podId, tournamentId, p.user_id, p.username);
+    }
+
+    for (let i = 0; i < podPlayers.length; i++) {
+      for (let j = i + 1; j < podPlayers.length; j++) {
+        await queries.recordMatchup(tournamentId, podPlayers[i].user_id, podPlayers[j].user_id, nextRoundNumber);
+      }
+    }
+
+    const podData = await queries.getPodById(podId);
+    const room = await channelManager.createPodRoom(guild, tournament, podData, nextRoundNumber, false, podPlayers);
+
+    const podMessagePayload = embeds.createTournamentPodMessage(podData, podPlayers, nextRoundNumber, false);
+    const playerPings = podPlayers.map(p => /^\d{17,20}$/.test(p.user_id) ? `<@${p.user_id}>` : `**${p.username}**`).join(' ');
+    const leaderPing = /^\d{17,20}$/.test(leader.user_id) ? `<@${leader.user_id}>` : `**${leader.username}**`;
+
+    const podMsg = await room.send({
+      content: `👋 Welcome to your match room! ${playerPings}\n👑 ${leaderPing} is the **Lobby Leader**. Please create the in-game OUAG lobby and submit the 4-character code below.`,
+      ...podMessagePayload
+    });
+
+    await queries.updatePodChannel(podId, room.id, podMsg.id);
+    createdPods.push({ podId, roomName: room.name, podNumber, size: podPlayers.length });
+  }
+
+  return { roundNumber: nextRoundNumber, isFinals: false, pods: createdPods };
+}
+
+/**
+ * Starts a Grand Finals round (continuous match-point format).
+ */
+async function startFinalsRound(guild, tournamentId) {
+  const tournament = await queries.getTournamentById(tournamentId);
+  if (!tournament) throw new Error('Tournament not found.');
+
+  const finalists = await queries.getFinalists(tournamentId);
+  if (finalists.length < config.TOURNAMENT_RULES.FINALS_QUALIFIERS) {
+    throw new Error(`Need exactly ${config.TOURNAMENT_RULES.FINALS_QUALIFIERS} qualified finalists. Check standings after Round 4.`);
+  }
+
+  const finalsRoundNumber = await queries.incrementFinalsRound(tournamentId);
+  await queries.updateTournamentStage(tournamentId, 'finals');
+  await queries.updateTournamentStatus(tournamentId, 'in_progress');
+
+  const roundId = await queries.createRound(tournamentId, finalsRoundNumber, 1);
+  const leader = finalists[0];
+  const podId = await queries.createPod(roundId, tournamentId, 1, leader.user_id);
+
+  for (const f of finalists) {
+    await queries.addPodPlayer(podId, tournamentId, f.user_id, f.username);
+  }
+
+  const podData = await queries.getPodById(podId);
+  const room = await channelManager.createPodRoom(guild, tournament, podData, finalsRoundNumber, true, finalists);
+
+  const podMessagePayload = embeds.createTournamentPodMessage(podData, finalists, finalsRoundNumber, true, finalsRoundNumber);
+  const playerPings = finalists.map(p => `<@${p.user_id}>`).join(' ');
+
+  const podMsg = await room.send({
+    content: `🏆 **GRAND FINALS — LOBBY #${finalsRoundNumber} IS LIVE!** ${playerPings}\n` +
+             `👑 <@${leader.user_id}> is the **Lobby Leader**. Please create the OUAG match and submit the 4-character code below.\n` +
+             `*(Players with 20+ Finals Points must finish 1st in this lobby to become Tournament Champion!)*`,
+    ...podMessagePayload
+  });
+
+  await queries.updatePodChannel(podId, room.id, podMsg.id);
+  return { finalsRoundNumber, podId, roomName: room.name };
+}
+
+/**
+ * Handles round transitions, Round 3 Cut, 15-Minute Finals Break, and Champion crowning.
+ */
+async function handleRoundCompletion(guild, tournament, round, isFinals, champion) {
+  const tourneyChannel = await guild.channels.fetch(tournament.tournament_channel_id).catch(() => null);
+  if (!tourneyChannel) return;
+
+  if (isFinals) {
+    const finalists = await queries.getFinalists(tournament.id);
+    const standingsEmbed = embeds.createStandingsEmbed(tournament, finalists, 'finals');
+
+    if (champion) {
+      await queries.updateTournamentStatus(tournament.id, 'completed');
+      await queries.updateTournamentStage(tournament.id, 'completed');
+
+      await tourneyChannel.send({
+        content: `👑 **CONGRATULATIONS TO THE ONCE UPON A GALAXY CHAMPION!** 👑\n` +
+                 `🏆 <@${champion.user_id}> (${champion.username}) has achieved 20+ Finals Points AND captured 1st Place!\n` +
+                 `Thank you to everyone who participated!`,
+        embeds: [standingsEmbed]
+      });
+    } else {
+      await tourneyChannel.send({
+        content: `🏁 **Finals Lobby #${tournament.finals_round_number} Concluded!**\n` +
+                 `No finalist has satisfied the championship condition yet.\n` +
+                 `Coordinators can launch the next Finals lobby with \`/tournament next-finals-round\`!`,
+        embeds: [standingsEmbed],
+        components: [embeds.createStandingsComponents(tournament)]
+      });
+    }
+    return;
+  }
+
+  const currentRoundNum = round.round_number;
+  let cutCount = 0;
+
+  // Rule B.5: Round 3 Cut (Eliminate bottom third)
+  if (currentRoundNum === config.TOURNAMENT_RULES.CUT_ROUND) {
+    const activeParticipants = await queries.getParticipants(tournament.id, true);
+    cutCount = Math.floor(activeParticipants.length / 3);
+
+    if (cutCount > 0) {
+      const eliminated = await queries.eliminateBottomThird(tournament.id, cutCount);
+      console.log(`[RoundManager] Round 3 Cut: Eliminated ${eliminated.length} players.`);
+    }
+  }
+
+  const standings = await queries.getStandings(tournament.id, 'swiss');
+  const standingsEmbed = embeds.createStandingsEmbed(tournament, standings, 'swiss', cutCount);
+
+  // Rule D.1 & D.2: After Round 4 -> 15-Minute Finals Break & Announce Top 6
+  if (currentRoundNum >= config.TOURNAMENT_RULES.SWISS_ROUNDS) {
+    const top6 = standings.filter(p => p.status === 'registered').slice(0, config.TOURNAMENT_RULES.FINALS_QUALIFIERS);
+    await queries.initFinalsParticipants(tournament.id, top6.map(p => p.user_id));
+    await queries.updateTournamentStage(tournament.id, 'finals_break');
+
+    const breakEmbed = embeds.createFinalsBreakEmbed(tournament, top6);
+
+    await tourneyChannel.send({
+      content: `🏁 **All 4 Swiss Rounds are officially complete!**\n` +
+               `⏰ **15-MINUTE FINALS BREAK COMMENCING** — Tournament staff is reviewing standings.`,
+      embeds: [standingsEmbed, breakEmbed],
+      components: [embeds.createStandingsComponents(tournament)]
+    });
+    return;
+  }
+
+  let announcement = `🏁 **Swiss Round ${currentRoundNum} is complete!**\n`;
+  if (currentRoundNum === 3) {
+    announcement += `⚠️ **Round 3 Cut Applied**: The bottom third (${cutCount} players) have been eliminated.\n` +
+                    `Remaining players advance to **Swiss Round 4**!`;
+  } else {
+    announcement += `Coordinators can begin the next round with \`/tournament next-round\`!`;
+  }
+
+  await tourneyChannel.send({
+    content: announcement,
+    embeds: [standingsEmbed],
+    components: [embeds.createStandingsComponents(tournament)]
+  });
+}
+
+module.exports = {
+  startRound,
+  startFinalsRound,
+  handleRoundCompletion
+};
