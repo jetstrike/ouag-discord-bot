@@ -410,9 +410,364 @@ async function runTests() {
   assert(!resultsEmbed.data.description.includes('undefined'), 'Results embed must never contain undefined');
 
   // Verify atomic pod completion claim prevents double-scoring
-  const podTestId = await queries.createPod(1, 999, 1, 'leader_1');
+  const podTestId = await queries.createPod(999, 999, 1, 'leader_1');
   assert.strictEqual(await queries.claimPodCompletion(podTestId), true, 'First pod completion claim should succeed');
   assert.strictEqual(await queries.claimPodCompletion(podTestId), false, 'Duplicate pod completion claim must fail');
+
+  // 11. End-to-End Integration: /ouag-help, /casual setup, and Casual Queue Buttons/Modals
+  console.log('\n[Test 11] Testing End-to-End Casual Commands, Buttons & Modals...');
+  const { createMockGuild, createMockInteraction } = require('./mockDiscord');
+  const { handleCasualButton, handleCasualModal } = require('../src/interactions/casualHandlers');
+  const { handleTournamentButton, handleTournamentModal } = require('../src/interactions/tournamentHandlers');
+  const { ChannelType } = require('discord.js');
+
+  const e2eGuild = createMockGuild('222222222222222222', '100000000000000001');
+  const casualCh = e2eGuild._makeChannel({ name: 'casual-queue', type: ChannelType.GuildText });
+  const adminUser = { id: '100000000000000001', username: 'AdminHost', tag: 'AdminHost#0001' };
+  const playerUsers = Array.from({ length: 6 }, (_, i) => ({
+    id: `20000000000000000${i + 1}`,
+    username: `Player${i + 1}`,
+    tag: `Player${i + 1}#0001`
+  }));
+
+  // /ouag-help
+  const helpInt = createMockInteraction({ guild: e2eGuild, channel: casualCh, user: playerUsers[0], commandName: 'ouag-help' });
+  await slashCommands.handleSlashCommand(helpInt);
+  assert(helpInt.replies[0].content.includes('Once Upon a Galaxy'), '/ouag-help must reply with guide');
+
+  // /casual setup denied for non-admin
+  const unauthCasual = createMockInteraction({
+    guild: e2eGuild, channel: casualCh, user: playerUsers[0], isAdmin: false, commandName: 'casual', subcommand: 'setup'
+  });
+  await slashCommands.handleSlashCommand(unauthCasual);
+  assert(unauthCasual.replies[0].content.includes('Manage Channels'), 'Non-admin /casual setup must be denied');
+
+  // /casual setup allowed for admin
+  const setupInt = createMockInteraction({
+    guild: e2eGuild, channel: casualCh, user: adminUser, isAdmin: true,
+    commandName: 'casual', subcommand: 'setup', optionValues: { channel: casualCh }
+  });
+  await slashCommands.handleSlashCommand(setupInt);
+  assert(setupInt.replies[0].content.includes('successfully initialized'), '/casual setup must initialize lobby');
+
+  const activeCasual = await queries.getActiveCasualLobby(e2eGuild.id, casualCh.id);
+  assert(activeCasual && activeCasual.message_id, 'Active casual lobby must exist with message_id');
+  const casualMsg = await casualCh.messages.fetch(activeCasual.message_id);
+
+  // Join, leave, re-join, submit code modal, start match
+  for (const u of playerUsers) {
+    await handleCasualButton(createMockInteraction({
+      guild: e2eGuild, channel: casualCh, user: u, customId: `casual_join_${activeCasual.id}`, message: casualMsg
+    }));
+  }
+  await handleCasualButton(createMockInteraction({
+    guild: e2eGuild, channel: casualCh, user: playerUsers[5], customId: `casual_leave_${activeCasual.id}`, message: casualMsg
+  }));
+  await handleCasualButton(createMockInteraction({
+    guild: e2eGuild, channel: casualCh, user: playerUsers[5], customId: `casual_join_${activeCasual.id}`, message: casualMsg
+  }));
+
+  const codeBtnInt = createMockInteraction({
+    guild: e2eGuild, channel: casualCh, user: playerUsers[0], customId: `casual_code_${activeCasual.id}`, message: casualMsg
+  });
+  await handleCasualButton(codeBtnInt);
+  assert.strictEqual(codeBtnInt.modals.length, 1, 'casual_code_ must open modal');
+
+  await handleCasualModal(createMockInteraction({
+    guild: e2eGuild, channel: casualCh, user: playerUsers[0],
+    customId: `casual_modal_code_${activeCasual.id}`, fieldValues: { lobby_code_input: 'ab12' }
+  }));
+  assert.strictEqual((await queries.getCasualLobbyById(activeCasual.id)).lobby_code, 'AB12');
+
+  await handleCasualButton(createMockInteraction({
+    guild: e2eGuild, channel: casualCh, user: playerUsers[0], customId: `casual_start_${activeCasual.id}`, message: casualMsg
+  }));
+  assert.strictEqual((await queries.getCasualLobbyById(activeCasual.id)).status, 'started');
+  const nextCasual = await queries.getActiveCasualLobby(e2eGuild.id, casualCh.id);
+  assert(nextCasual && nextCasual.id !== activeCasual.id, 'Starting casual match must spawn a fresh queue');
+  console.log('  ✅ End-to-end /ouag-help, /casual setup, and casual buttons/modals verified.');
+
+  // 12. End-to-End Integration: All /tournament Commands, Buttons, Modals & Rulings
+  console.log('\n[Test 12] Testing End-to-End Tournament Lifecycle & All Commands...');
+  const tourneyCh = e2eGuild._makeChannel({ name: 'tournaments', type: ChannelType.GuildText });
+  const resultsCh = e2eGuild._makeChannel({ name: 'results', type: ChannelType.GuildText });
+  const categoryCh = e2eGuild._makeChannel({ name: 'OUAG Pods', type: ChannelType.GuildCategory });
+
+  // Create tournament
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'create',
+    optionValues: {
+      name: 'E2E Championship',
+      channel_mode: 'category',
+      results_channel: resultsCh,
+      category: categoryCh
+    }
+  }));
+
+  const tourney = await queries.getActiveTournament(e2eGuild.id);
+  assert(tourney && tourney.name === 'E2E Championship', 'Tournament must be created');
+
+  // Register & withdraw via buttons
+  await handleTournamentButton(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: playerUsers[0], customId: `tourney_reg_${tourney.id}`
+  }));
+  await handleTournamentButton(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: playerUsers[0], customId: `tourney_withdraw_${tourney.id}`
+  }));
+  await handleTournamentButton(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: playerUsers[0], customId: `tourney_reg_${tourney.id}`
+  }));
+
+  // /tournament add-player, drop-player, re-add, add-bots
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'add-player', optionValues: { player: playerUsers[1] }
+  }));
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'drop-player', optionValues: { player: playerUsers[1] }
+  }));
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'add-player', optionValues: { player: playerUsers[1] }
+  }));
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'add-bots', optionValues: { count: 10 }
+  }));
+
+  // 12 players -> 2 pods of 6
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'start'
+  }));
+  let activeTourney = await queries.getTournamentById(tourney.id);
+  assert.strictEqual(activeTourney.current_round, 1);
+
+  // Get Round 1 pods
+  const r1Pods = await queries.getPodsForRound((await queries.getPodById(
+    (await queries.getActivePodForPlayer(tourney.id, 1, playerUsers[0].id)).id
+  )).round_id);
+  assert.strictEqual(r1Pods.length, 2, '12 players should produce 2 pods');
+
+  // Pod 1: code modal, start match, player report, coordinator override modal
+  const pod1 = r1Pods[0];
+  const pod1Ch = await e2eGuild.channels.fetch(pod1.channel_id);
+  const pod1Leader = { id: pod1.leader_user_id, username: 'Leader' };
+
+  const podCodeTrigger = createMockInteraction({
+    guild: e2eGuild, channel: pod1Ch, user: adminUser, isAdmin: true, customId: `pod_code_${pod1.id}`
+  });
+  await handleTournamentButton(podCodeTrigger);
+  assert.strictEqual(podCodeTrigger.modals.length, 1);
+
+  await handleTournamentModal(createMockInteraction({
+    guild: e2eGuild, channel: pod1Ch, user: adminUser, isAdmin: true,
+    customId: `pod_modal_code_${pod1.id}`, fieldValues: { pod_code_input: '9Z1X' }
+  }));
+  await handleTournamentButton(createMockInteraction({
+    guild: e2eGuild, channel: pod1Ch, user: adminUser, isAdmin: true, customId: `pod_start_${pod1.id}`
+  }));
+
+  const pod1Players = await queries.getPodPlayers(pod1.id);
+  const realInPod1 = pod1Players.find(p => p.user_id === playerUsers[0].id || p.user_id === playerUsers[1].id);
+  if (realInPod1) {
+    const reportMenuInt = createMockInteraction({
+      guild: e2eGuild, channel: pod1Ch, user: { id: realInPod1.user_id, username: realInPod1.username },
+      customId: `pod_report_${pod1.id}`
+    });
+    await handleTournamentButton(reportMenuInt);
+    assert(reportMenuInt.replies[0].components.length > 0, 'pod_report_ must return rank buttons');
+
+    await handleTournamentButton(createMockInteraction({
+      guild: e2eGuild, channel: pod1Ch, user: { id: realInPod1.user_id, username: realInPod1.username },
+      customId: `pod_place_${pod1.id}_1`
+    }));
+  }
+
+  // Coordinator override modal on pod 1
+  const overrideTrigger = createMockInteraction({
+    guild: e2eGuild, channel: pod1Ch, user: adminUser, isAdmin: true, customId: `pod_override_${pod1.id}`
+  });
+  await handleTournamentButton(overrideTrigger);
+  assert.strictEqual(overrideTrigger.modals.length, 1);
+
+  await handleTournamentModal(createMockInteraction({
+    guild: e2eGuild, channel: pod1Ch, user: adminUser, isAdmin: true,
+    customId: `pod_modal_override_${pod1.id}`, fieldValues: { override_placements_input: '1 2 3 4 5 6' }
+  }));
+  assert.strictEqual((await queries.getPodById(pod1.id)).status, 'completed');
+
+  // Pod 2: simulate button
+  const pod2 = r1Pods[1];
+  const pod2Ch = await e2eGuild.channels.fetch(pod2.channel_id);
+  await handleTournamentButton(createMockInteraction({
+    guild: e2eGuild, channel: pod2Ch, user: adminUser, isAdmin: true, customId: `pod_simulate_${pod2.id}`
+  }));
+  assert.strictEqual((await queries.getPodById(pod2.id)).status, 'completed');
+
+  // /tournament standings
+  const standingsInt = createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: playerUsers[0], commandName: 'tournament', subcommand: 'standings'
+  });
+  await slashCommands.handleSlashCommand(standingsInt);
+  assert(standingsInt.replies[0].embeds.length === 1, '/tournament standings must return standings embed');
+
+  // Round 2 + /tournament crash-replay + simulate
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true, commandName: 'tournament', subcommand: 'next-round'
+  }));
+  const r2Pods = await queries.getPodsForRound((await queries.getPodById(
+    (await queries.getActivePodForPlayer(tourney.id, 2, playerUsers[0].id)).id
+  )).round_id);
+
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'crash-replay', optionValues: { pod_id: r2Pods[0].id }
+  }));
+  for (const p of r2Pods) {
+    const ch = await e2eGuild.channels.fetch(p.channel_id);
+    await handleTournamentButton(createMockInteraction({
+      guild: e2eGuild, channel: ch, user: adminUser, isAdmin: true, customId: `pod_simulate_${p.id}`
+    }));
+  }
+
+  // Round 3 + simulate (triggers Round 3 Cut) + negative cut rejection + manual cut
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true, commandName: 'tournament', subcommand: 'next-round'
+  }));
+  const r3Pods = await queries.getPodsForRound((await queries.getPodById(
+    (await queries.getActivePodForPlayer(tourney.id, 3, playerUsers[0].id)).id
+  )).round_id);
+  for (const p of r3Pods) {
+    const ch = await e2eGuild.channels.fetch(p.channel_id);
+    await handleTournamentButton(createMockInteraction({
+      guild: e2eGuild, channel: ch, user: adminUser, isAdmin: true, customId: `pod_simulate_${p.id}`
+    }));
+  }
+
+  const badCutInt = createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'cut', optionValues: { count: -1 }
+  });
+  await slashCommands.handleSlashCommand(badCutInt);
+  assert(badCutInt.replies[0].content.includes('positive integer'), 'Negative cut count must be rejected');
+
+  // Round 4 + simulate -> Finals Break (Top 6)
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true, commandName: 'tournament', subcommand: 'next-round'
+  }));
+  const remainingActive = await queries.getParticipants(tourney.id, true);
+  const r4Pods = await queries.getPodsForRound((await queries.getPodById(
+    (await queries.getActivePodForPlayer(tourney.id, 4, remainingActive[0].user_id)).id
+  )).round_id);
+  for (const p of r4Pods) {
+    const ch = await e2eGuild.channels.fetch(p.channel_id);
+    await handleTournamentButton(createMockInteraction({
+      guild: e2eGuild, channel: ch, user: adminUser, isAdmin: true, customId: `pod_simulate_${p.id}`
+    }));
+  }
+  assert.strictEqual((await queries.getTournamentById(tourney.id)).stage, 'finals_break');
+
+  // /tournament start-finals + /tournament rule-stuck
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true, commandName: 'tournament', subcommand: 'start-finals'
+  }));
+  const e2eFinalists = await queries.getFinalists(tourney.id);
+  assert.strictEqual(e2eFinalists.length, 6);
+
+  // Note: round 1 in finals vs swiss round 1 both have round_number=1, fetch latest pod for finalist
+  const allFinalistPods = await db.all(
+    `SELECT p.* FROM tournament_pods p JOIN tournament_rounds r ON p.round_id = r.id WHERE p.tournament_id = ? AND r.is_finals = 1 ORDER BY p.id DESC LIMIT 1`,
+    [tourney.id]
+  );
+  const finalsPod1 = allFinalistPods[0];
+
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'rule-stuck',
+    optionValues: {
+      pod_id: finalsPod1.id,
+      player1: { id: e2eFinalists[0].user_id },
+      player2: { id: e2eFinalists[1].user_id }
+    }
+  }));
+  // Stuck pod must NOT crown champion even if e2eFinalists[0] had >= 20 pts
+  assert.notStrictEqual((await queries.getTournamentById(tourney.id)).status, 'completed', 'Stuck finals pod must never crown a champion');
+
+  // /tournament next-finals-round + /tournament crash-two
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true, commandName: 'tournament', subcommand: 'next-finals-round'
+  }));
+  const finalsPod2 = (await db.all(
+    `SELECT p.* FROM tournament_pods p JOIN tournament_rounds r ON p.round_id = r.id WHERE p.tournament_id = ? AND r.is_finals = 1 ORDER BY p.id DESC LIMIT 1`,
+    [tourney.id]
+  ))[0];
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'crash-two',
+    optionValues: {
+      pod_id: finalsPod2.id,
+      player1: { id: e2eFinalists[0].user_id },
+      player2: { id: e2eFinalists[1].user_id }
+    }
+  }));
+
+  // Report issue + resolve issue button
+  const issueInt = createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: playerUsers[0], customId: `tourney_report_issue_${tourney.id}`
+  });
+  await handleTournamentButton(issueInt);
+  assert(issueInt.replies[0].content.includes('Issue report opened'), 'Report issue must open channel');
+  const issueRows = await queries.getIssueChannels(tourney.id);
+  assert.strictEqual(issueRows.length, 1);
+
+  const issueCh = await e2eGuild.channels.fetch(issueRows[0].channel_id);
+  const resolveInt = createMockInteraction({
+    guild: e2eGuild, channel: issueCh, user: adminUser, isAdmin: true, customId: `issue_resolve_${tourney.id}`
+  });
+  await handleTournamentButton(resolveInt);
+  assert(resolveInt.replies[0].content.includes('marked as resolved'), 'issue_resolve_ must acknowledge resolution');
+
+  // Drop confirmation cancel & confirm
+  await handleTournamentButton(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: playerUsers[0], customId: `tourney_cancel_drop`
+  }));
+  await handleTournamentButton(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: playerUsers[0], customId: `tourney_confirm_drop_${tourney.id}_0`
+  }));
+
+  // /tournament cleanup (including cross-guild rejection)
+  const crossGuildCleanup = createMockInteraction({
+    guild: createMockGuild('999888777666555444'), channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'cleanup', optionValues: { tournament_id: tourney.id }
+  });
+  await slashCommands.handleSlashCommand(crossGuildCleanup);
+  assert(crossGuildCleanup.replies[0].content.includes('not found in this server'), 'Cross-guild cleanup must be blocked');
+
+  const cleanupInt = createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'cleanup', optionValues: { delete_category: false }
+  });
+  await slashCommands.handleSlashCommand(cleanupInt);
+  assert(cleanupInt.replies[0].content.includes('Tournament Cleanup Complete'), '/tournament cleanup must succeed');
+
+  // /tournament cancel (on a fresh active tournament since E2E Championship completed on champion win)
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'create',
+    optionValues: { name: 'Cancel Test Tourney', channel_mode: 'thread' }
+  }));
+  const cancelTourney = await queries.getActiveTournament(e2eGuild.id);
+  assert(cancelTourney && cancelTourney.name === 'Cancel Test Tourney');
+
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'cancel'
+  }));
+  assert.strictEqual(await queries.getTournamentById(cancelTourney.id), null, '/tournament cancel must remove active tournament from DB');
+  console.log('  ✅ Full end-to-end tournament lifecycle & all 15 subcommands/buttons/modals verified.');
 
   console.log('\n======================================================');
   console.log('🎉 ALL TESTS PASSED! FULL CHEKHOV’S GUM FORMAT VERIFIED!');
