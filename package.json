@@ -1,0 +1,22 @@
+{
+  "name": "ouag-discord-bot",
+  "version": "1.0.0",
+  "description": "Discord bot for Once Upon a Galaxy (OUAG) casual lobbies and 6-player pod Swiss tournaments",
+  "main": "index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node test/test_suite.js",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:logs": "pm2 logs ouag-discord-bot"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "discord.js": "^14.27.0",
+    "dotenv": "^18.0.9",
+    "mysql2": "^3.24.6"
+  }
+}
