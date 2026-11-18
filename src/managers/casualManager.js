@@ -3,6 +3,27 @@ const queries = require('../database/queries');
 const embeds = require('../utils/embeds');
 const config = require('../config');
 
+const lobbyLocks = new Map();
+
+/**
+ * Serializes concurrent operations per casual lobby to prevent >6 player join races.
+ */
+async function withLobbyLock(lobbyId, fn) {
+  const prev = lobbyLocks.get(lobbyId) || Promise.resolve();
+  let release;
+  const next = new Promise(resolve => { release = resolve; });
+  lobbyLocks.set(lobbyId, prev.then(() => next));
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (lobbyLocks.get(lobbyId) === next) {
+      lobbyLocks.delete(lobbyId);
+    }
+  }
+}
+
 /**
  * Ensures an active, visible casual queue lobby exists in the channel.
  */
@@ -50,38 +71,40 @@ async function ensureActiveLobby(channelInput, guildId = null) {
  * Player joins the casual queue.
  */
 async function handleJoinQueue(interaction, lobbyId) {
-  const lobby = await queries.getCasualLobbyById(lobbyId);
-  if (!lobby || lobby.status === 'started' || lobby.status === 'completed') {
-    return interaction.reply({ content: '⚠️ This lobby is no longer active.', flags: MessageFlags.Ephemeral });
-  }
+  return await withLobbyLock(lobbyId, async () => {
+    const lobby = await queries.getCasualLobbyById(lobbyId);
+    if (!lobby || lobby.status === 'started' || lobby.status === 'completed') {
+      return interaction.reply({ content: '⚠️ This lobby is no longer active.', flags: MessageFlags.Ephemeral });
+    }
 
-  const players = await queries.getCasualPlayers(lobbyId);
-  if (players.length >= config.LOBBY_SIZE) {
-    return interaction.reply({ content: '⚠️ This lobby is already full (6/6 players)!', flags: MessageFlags.Ephemeral });
-  }
+    const players = await queries.getCasualPlayers(lobbyId);
+    if (players.length >= config.LOBBY_SIZE) {
+      return interaction.reply({ content: '⚠️ This lobby is already full (6/6 players)!', flags: MessageFlags.Ephemeral });
+    }
 
-  const alreadyJoined = players.some(p => p.user_id === interaction.user.id);
-  if (alreadyJoined) {
-    return interaction.reply({ content: 'ℹ️ You are already in this lobby queue!', flags: MessageFlags.Ephemeral });
-  }
+    const alreadyJoined = players.some(p => p.user_id === interaction.user.id);
+    if (alreadyJoined) {
+      return interaction.reply({ content: 'ℹ️ You are already in this lobby queue!', flags: MessageFlags.Ephemeral });
+    }
 
-  await queries.addCasualPlayer(lobbyId, interaction.user.id, interaction.user.username);
-  const updatedPlayers = await queries.getCasualPlayers(lobbyId);
+    await queries.addCasualPlayer(lobbyId, interaction.user.id, interaction.user.username);
+    const updatedPlayers = await queries.getCasualPlayers(lobbyId);
 
-  // Update lobby embed
-  const payload = embeds.createCasualQueueMessage(lobby, updatedPlayers);
-  await interaction.update(payload);
+    // Update lobby embed
+    const payload = embeds.createCasualQueueMessage(lobby, updatedPlayers);
+    await interaction.update(payload);
 
-  // If lobby just reached 6 players, send a brief alert
-  if (updatedPlayers.length === config.LOBBY_SIZE) {
-    const mentions = updatedPlayers.map(p => `<@${p.user_id}>`).join(' ');
-    await interaction.channel.send({
-      content: `🎉 **Lobby is full (6/6)!** ${mentions}\n` +
-               (lobby.lobby_code 
-                 ? `🔑 Lobby Code is: **\`${lobby.lobby_code}\`**. Any player can now click **Start Match**!` 
-                 : `Please have any player submit the 4-character OUAG game code!`)
-    });
-  }
+    // If lobby just reached 6 players, send a brief alert
+    if (updatedPlayers.length === config.LOBBY_SIZE) {
+      const mentions = updatedPlayers.map(p => `<@${p.user_id}>`).join(' ');
+      await interaction.channel.send({
+        content: `🎉 **Lobby is full (6/6)!** ${mentions}\n` +
+                 (lobby.lobby_code 
+                   ? `🔑 Lobby Code is: **\`${lobby.lobby_code}\`**. Any player can now click **Start Match**!` 
+                   : `Please have any player submit the 4-character OUAG game code!`)
+      });
+    }
+  });
 }
 
 /**

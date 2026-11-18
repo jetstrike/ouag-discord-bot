@@ -135,7 +135,7 @@ function calculateFinalsPodScores(playerReports) {
  * [1, 1, 3, 4, 5, 6] -> valid (2 players tied for 1st, next is 3rd)
  * [1, 2, 2, 2, 5] -> valid for 5 players (3 players tied for 2nd, next is 5th)
  */
-function validatePlacements(placements, expectedCount = 6) {
+function validatePlacements(placements, expectedCount = 6, { allowTies = true } = {}) {
   if (!Array.isArray(placements) || placements.length !== expectedCount) {
     return { valid: false, error: `Expected exactly ${expectedCount} player placements, but received ${placements?.length || 0}.` };
   }
@@ -161,6 +161,12 @@ function validatePlacements(placements, expectedCount = 6) {
     while (i < sorted.length && sorted[i] === currentRank) {
       tieCount++;
       i++;
+    }
+    if (!allowTies && tieCount > 1) {
+      return {
+        valid: false,
+        error: `Multiple players claimed Rank ${currentRank}. Ties must be verified by a Coordinator using **Override**.`
+      };
     }
     expectedNextRank += tieCount;
   }

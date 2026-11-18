@@ -2,6 +2,7 @@ const { MessageFlags } = require('discord.js');
 const queries = require('../database/queries');
 const embeds = require('../utils/embeds');
 const scoring = require('../utils/scoring');
+const channelManager = require('./channelManager');
 const { isCoordinator } = require('../utils/permissions');
 const { handleRoundCompletion } = require('./roundManager');
 const config = require('../config');
@@ -128,7 +129,7 @@ async function handlePlayerReportPlacement(interaction, podId, placement) {
   if (reportedCount === players.length) {
     const targetGuild = interaction.guild || (interaction.guildId ? await interaction.client.guilds.fetch(interaction.guildId).catch(() => null) : null);
     if (targetGuild) {
-      await finalizePodResults(targetGuild, pod, updatedPlayers, round, tournament);
+      await finalizePodResults(targetGuild, pod, updatedPlayers, round, tournament, { allowTies: false });
     }
   }
 }
@@ -136,9 +137,9 @@ async function handlePlayerReportPlacement(interaction, podId, placement) {
 /**
  * Finalizes results for a pod when all players have reported or coordinator overrides.
  */
-async function finalizePodResults(guild, pod, players, round, tournament) {
+async function finalizePodResults(guild, pod, players, round, tournament, { allowTies = true } = {}) {
   const placements = players.map(p => p.placement);
-  const validation = scoring.validatePlacements(placements, players.length);
+  const validation = scoring.validatePlacements(placements, players.length, { allowTies });
 
   const channel = guild ? await guild.channels.fetch(pod.channel_id).catch(() => null) : null;
 
@@ -231,6 +232,18 @@ async function finalizePodResults(guild, pod, players, round, tournament) {
     await queries.completeRound(round.id);
     await handleRoundCompletion(guild, tournament, round, isFinals, champion);
   }
+
+  // Clean up pod room upon resolution (lock/archive threads immediately; delete text channels after 10s)
+  if (guild && pod.channel_id) {
+    if (tournament.channel_mode === 'thread') {
+      await channelManager.cleanupPodRoom(guild, pod.channel_id, tournament.channel_mode);
+    } else {
+      const timer = setTimeout(() => {
+        channelManager.cleanupPodRoom(guild, pod.channel_id, tournament.channel_mode).catch(() => null);
+      }, 10000);
+      if (typeof timer.unref === 'function') timer.unref();
+    }
+  }
 }
 
 /**
@@ -239,6 +252,7 @@ async function finalizePodResults(guild, pod, players, round, tournament) {
 async function rulePodStuck(guild, podId, remainingPlayerIds) {
   const pod = await queries.getPodById(podId);
   if (!pod) throw new Error(`Pod #${podId} not found.`);
+  if (pod.status === 'completed') throw new Error(`Pod #${podId} is already completed.`);
   const tournament = await queries.getTournamentById(pod.tournament_id);
   const round = await queries.getRoundById(pod.round_id);
   const allPlayers = await queries.getPodPlayers(podId);
@@ -251,9 +265,10 @@ async function rulePodStuck(guild, podId, remainingPlayerIds) {
     }
   }
 
-  await queries.markPodStuck(podId);
+  const marked = await queries.markPodStuck(podId);
+  if (!marked) throw new Error(`Pod #${podId} is already completed.`);
   pod.status = 'stuck';
-  await finalizePodResults(guild, pod, allPlayers, round, tournament);
+  await finalizePodResults(guild, pod, allPlayers, round, tournament, { allowTies: true });
 }
 
 /**
@@ -262,6 +277,7 @@ async function rulePodStuck(guild, podId, remainingPlayerIds) {
 async function voidPodReplay(guild, podId) {
   const pod = await queries.getPodById(podId);
   if (!pod) throw new Error(`Pod #${podId} not found.`);
+  if (pod.status === 'completed') throw new Error(`Pod #${podId} is already completed.`);
   await queries.voidPodMatch(podId);
 
   const channel = await guild.channels.fetch(pod.channel_id).catch(() => null);
@@ -279,6 +295,7 @@ async function voidPodReplay(guild, podId) {
 async function ruleCrashTwoPlayers(guild, podId, player1Id, player2Id) {
   const pod = await queries.getPodById(podId);
   if (!pod) throw new Error(`Pod #${podId} not found.`);
+  if (pod.status === 'completed') throw new Error(`Pod #${podId} is already completed.`);
   const tournament = await queries.getTournamentById(pod.tournament_id);
   const round = await queries.getRoundById(pod.round_id);
   const allPlayers = await queries.getPodPlayers(podId);
@@ -291,7 +308,7 @@ async function ruleCrashTwoPlayers(guild, podId, player1Id, player2Id) {
     }
   }
 
-  await finalizePodResults(guild, pod, allPlayers, round, tournament);
+  await finalizePodResults(guild, pod, allPlayers, round, tournament, { allowTies: true });
 }
 
 /**
