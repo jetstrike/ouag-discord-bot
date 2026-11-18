@@ -769,6 +769,69 @@ async function runTests() {
   assert.strictEqual(await queries.getTournamentById(cancelTourney.id), null, '/tournament cancel must remove active tournament from DB');
   console.log('  ✅ Full end-to-end tournament lifecycle & all 15 subcommands/buttons/modals verified.');
 
+  // 13. Concurrency, Double-Scoring, Self-Report Ties & Auto-Cleanup Regressions
+  console.log('\n[Test 13] Testing Concurrency, Ruling Guards, Tie Validation & Pod Cleanup...');
+
+  // 13a. Concurrent casual_join_ cannot exceed 6 players
+  const raceLobbyId = await queries.createCasualLobby(e2eGuild.id, casualCh.id);
+  const raceLobbyMsg = await casualCh.send({ content: 'race lobby' });
+  await queries.updateCasualLobbyMessage(raceLobbyId, raceLobbyMsg.id);
+  const raceUsers = Array.from({ length: 8 }, (_, i) => ({ id: `30000000000000000${i}`, username: `Racer${i}` }));
+  await Promise.all(raceUsers.map(u => handleCasualButton(createMockInteraction({
+    guild: e2eGuild, channel: casualCh, user: u, customId: `casual_join_${raceLobbyId}`, message: raceLobbyMsg
+  }))));
+  const joinedRacePlayers = await queries.getCasualPlayers(raceLobbyId);
+  assert.strictEqual(joinedRacePlayers.length, 6, 'Concurrent casual joins must cap at 6 players');
+
+  // 13b. Player-submitted ties rejected when allowTies=false; allowed when allowTies=true
+  assert.strictEqual(scoring.validatePlacements([1, 1, 3, 4, 5, 6], 6, { allowTies: false }).valid, false, 'Player self-report must reject duplicate 1st place');
+  assert.strictEqual(scoring.validatePlacements([1, 1, 3, 4, 5, 6], 6, { allowTies: true }).valid, true, 'Coordinator override must allow ties');
+
+  // 13c. Round guard, concurrent startRound guard, thread auto-cleanup, and completed-pod ruling guard
+  const tGuardId = await queries.createTournament({
+    guildId: e2eGuild.id,
+    name: 'Guard Test Tourney',
+    channelMode: 'thread',
+    tournamentChannelId: tourneyCh.id,
+    resultsChannelId: resultsCh.id,
+    createdBy: adminUser.id
+  });
+  for (let i = 0; i < 6; i++) {
+    await queries.registerParticipant(tGuardId, `40000000000000000${i}`, `GuardP${i}`);
+  }
+  const tournamentManager = require('../src/managers/tournamentManager');
+  const [startA, startB] = await Promise.allSettled([
+    tournamentManager.startRound(e2eGuild, tGuardId),
+    tournamentManager.startRound(e2eGuild, tGuardId)
+  ]);
+  const startSuccesses = [startA, startB].filter(r => r.status === 'fulfilled');
+  assert.strictEqual(startSuccesses.length, 1, 'Concurrent startRound calls must only allow 1 coordinator to start Round 1');
+
+  await assert.rejects(
+    () => tournamentManager.startRound(e2eGuild, tGuardId),
+    /incomplete pod/i,
+    'Cannot start Round 2 while Round 1 pod is incomplete'
+  );
+
+  const guardPodId = startSuccesses[0].value.pods[0].podId;
+  await tournamentManager.simulatePodMatch(e2eGuild, guardPodId);
+  const guardPodAfter = await queries.getPodById(guardPodId);
+  const guardThread = await e2eGuild.channels.fetch(guardPodAfter.channel_id);
+  assert.strictEqual(guardThread.archived, true, 'Thread-mode pod room must auto-archive upon pod completion');
+  assert.strictEqual(guardThread.locked, true, 'Thread-mode pod room must auto-lock upon pod completion');
+
+  await assert.rejects(
+    () => tournamentManager.rulePodStuck(e2eGuild, guardPodId, ['400000000000000000', '400000000000000001']),
+    /already completed/i,
+    'rulePodStuck must reject already-completed pods to prevent double-scoring'
+  );
+  await assert.rejects(
+    () => tournamentManager.ruleCrashTwoPlayers(e2eGuild, guardPodId, '400000000000000000', '400000000000000001'),
+    /already completed/i,
+    'ruleCrashTwoPlayers must reject already-completed pods'
+  );
+  console.log('  ✅ Concurrency, ruling guards, tie validation, and thread auto-cleanup verified.');
+
   console.log('\n======================================================');
   console.log('🎉 ALL TESTS PASSED! FULL CHEKHOV’S GUM FORMAT VERIFIED!');
   console.log('======================================================\n');

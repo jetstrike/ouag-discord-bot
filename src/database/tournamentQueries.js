@@ -183,6 +183,22 @@ async function getRoundById(roundId) {
   return await db.get(`SELECT * FROM tournament_rounds WHERE id = ?`, [roundId]);
 }
 
+async function getRoundByTournamentAndNumber(tournamentId, roundNumber, isFinals = 0) {
+  return await db.get(
+    `SELECT * FROM tournament_rounds WHERE tournament_id = ? AND round_number = ? AND is_finals = ? ORDER BY id DESC LIMIT 1`,
+    [tournamentId, roundNumber, isFinals ? 1 : 0]
+  );
+}
+
+async function claimNextRound(tournamentId, expectedCurrentRound, nextRoundNumber) {
+  const res = await db.run(
+    `UPDATE tournaments SET current_round = ?, status = 'in_progress', stage = 'swiss' 
+     WHERE id = ? AND current_round = ? AND stage != 'finals'`,
+    [nextRoundNumber, tournamentId, expectedCurrentRound]
+  );
+  return res.changes > 0;
+}
+
 async function completeRound(roundId) {
   await db.run(`UPDATE tournament_rounds SET status = 'completed' WHERE id = ?`, [roundId]);
 }
@@ -253,7 +269,11 @@ async function markPodStarted(podId) {
 }
 
 async function markPodStuck(podId) {
-  await db.run(`UPDATE tournament_pods SET status = 'stuck' WHERE id = ?`, [podId]);
+  const res = await db.run(
+    `UPDATE tournament_pods SET status = 'stuck' WHERE id = ? AND status != 'completed'`,
+    [podId]
+  );
+  return res.changes > 0;
 }
 
 async function setPodPlayerPlacement(podId, userId, placement, swissPts = 0, carryOverPts = 0, finalsPts = 0) {
@@ -407,6 +427,8 @@ module.exports = {
   getFinalists,
   createRound,
   getRoundById,
+  getRoundByTournamentAndNumber,
+  claimNextRound,
   completeRound,
   createPod,
   updatePodChannel,

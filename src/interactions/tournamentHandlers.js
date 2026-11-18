@@ -403,7 +403,7 @@ async function handleTournamentModal(interaction) {
     });
 
     const targetGuild = interaction.guild || (interaction.guildId ? await interaction.client.guilds.fetch(interaction.guildId).catch(() => null) : null);
-    return await tournamentManager.finalizePodResults(targetGuild, pod, players, round, tournament);
+    return await tournamentManager.finalizePodResults(targetGuild, pod, players, round, tournament, { allowTies: true });
   }
 }
 

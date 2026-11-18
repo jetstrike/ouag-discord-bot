@@ -20,15 +20,28 @@ async function startRound(guild, tournamentId) {
     throw new Error(`All ${config.TOURNAMENT_RULES.SWISS_ROUNDS} Swiss rounds have concluded. Use /tournament start-finals to start the Finals.`);
   }
 
+  if (tournament.current_round > 0) {
+    const prevRound = await queries.getRoundByTournamentAndNumber(tournamentId, tournament.current_round, 0);
+    if (prevRound) {
+      const prevPods = await queries.getPodsForRound(prevRound.id);
+      const incomplete = prevPods.filter(p => p.status !== 'completed');
+      if (incomplete.length > 0) {
+        throw new Error(`Swiss Round ${tournament.current_round} still has ${incomplete.length} incomplete pod(s). Finish or rule all pods before advancing.`);
+      }
+    }
+  }
+
   const participants = await queries.getParticipants(tournamentId, true);
   if (participants.length < config.MIN_LOBBY_SIZE) {
     throw new Error(`Need at least ${config.MIN_LOBBY_SIZE} registered players to start a round. Currently active: ${participants.length}.`);
   }
 
+  const claimed = await queries.claimNextRound(tournamentId, tournament.current_round, nextRoundNumber);
+  if (!claimed) {
+    throw new Error(`Swiss Round ${nextRoundNumber} is already being started by another coordinator.`);
+  }
+
   const roundId = await queries.createRound(tournamentId, nextRoundNumber, 0);
-  await queries.updateTournamentCurrentRound(tournamentId, nextRoundNumber);
-  await queries.updateTournamentStatus(tournamentId, 'in_progress');
-  await queries.updateTournamentStage(tournamentId, 'swiss');
 
   const matchupHistory = await queries.getMatchupHistory(tournamentId);
   const podGroups = swissPairing.generatePods(participants, nextRoundNumber, false, matchupHistory);
@@ -80,6 +93,16 @@ async function startFinalsRound(guild, tournamentId) {
   const finalists = await queries.getFinalists(tournamentId);
   if (finalists.length < config.TOURNAMENT_RULES.FINALS_QUALIFIERS) {
     throw new Error(`Need exactly ${config.TOURNAMENT_RULES.FINALS_QUALIFIERS} qualified finalists. Check standings after Round 4.`);
+  }
+
+  if (tournament.finals_round_number > 0) {
+    const prevFinalsRound = await queries.getRoundByTournamentAndNumber(tournamentId, tournament.finals_round_number, 1);
+    if (prevFinalsRound) {
+      const prevPods = await queries.getPodsForRound(prevFinalsRound.id);
+      if (prevPods.some(p => p.status !== 'completed')) {
+        throw new Error(`Finals Lobby #${tournament.finals_round_number} is still in progress. Finish or rule it before starting the next lobby.`);
+      }
+    }
   }
 
   const finalsRoundNumber = await queries.incrementFinalsRound(tournamentId);
