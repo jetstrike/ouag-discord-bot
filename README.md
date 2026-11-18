@@ -1,165 +1,82 @@
-# 🌌 Once Upon a Galaxy (OUAG) — Live Lobby & Tournament Discord Bot
+# OUAG Discord Bot
 
-A Discord bot designed specifically for **Once Upon a Galaxy (OUAG)**. It automates 6-player live lobbies with two distinct modes: **Continuous Casual Lobbies** and **Official Chekhov’s Gum Tournament Rules** (4 Swiss Rounds, Round 3 Cut, Carry-Over Points, and Match-Point Grand Finals).
+A Discord bot for **Once Upon a Galaxy** that manages 6-player casual lobby queues and Swiss/Finals tournaments (Chekhov's Gum format).
 
----
+## Features
 
-## ✨ Features
+### Casual Lobbies
+- Persistent 6-player queue embed with Join, Leave, Submit Code, and Start Match buttons.
+- Any player in the queue can submit the 4-character lobby code and start the match.
+- Starting a match clears the old queue message and posts a fresh one for the next group.
 
-### 🎮 1. Casual Lobbies Mode
-* **Continuous 6-Player Queue**: Interactive buttons (`Join Queue`, `Leave`, `Submit Code`, `Start Match`) on a live Discord embed.
-* **4-Character Alphanumeric Code**: Any player in the queue can submit the game code (e.g. `X8K2`). The embed dynamically updates with the code and player roster.
-* **Match Start & Rapid Turnover**: Any player in the lobby can mark the match as started. The bot hides/cleans up the queue message and automatically spawns a fresh queue so the next group can immediately organize.
+### Tournaments (Chekhov's Gum Format)
+- **Swiss Stage (4 rounds):** Round 1 is seeded randomly; Rounds 2–4 pair by score while minimizing rematches. Lobbies prioritize 6 players, leaving lower-point pods at 4 or 5 players (e.g., 14 players -> `6, 4, 4`).
+- **Scoring:** Swiss points (`6, 4, 3, 2, 1, 0`) and Carry-Over points (`4, 2, 0, 0, 0, 0`). Tied placements split the combined points of the tied positions evenly.
+- **Round 3 Cut:** Eliminates the bottom third of active players after Round 3.
+- **Finals (Top 6):** Finalists start with their Carry-Over points. Finals lobbies award `10, 8, 6, 4, 2, 0`. Reaching 20+ Finals points makes a player eligible to win; finishing 1st in a Finals lobby while eligible wins the tournament.
+- **Rulings & Support:** Built-in commands for stuck lobbies, game crashes (replay or 2-player tie), player drop buttons, coordinator issue ticket channels, and channel/thread cleanup.
 
----
+## Setup
 
-### 🏆 2. Official Tournament Format (Chekhov’s Gum Rules)
+### 1. Discord Application
+1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications).
+2. Under **Bot**, generate and copy your token. Leave all Privileged Gateway Intents off (the bot only uses interactions).
+3. Under **OAuth2 -> URL Generator**, select `bot` and `applications.commands`. Grant `Manage Channels`, `Manage Roles`, `View Channels`, `Send Messages`, `Manage Messages`, `Create Private Threads`, and `Embed Links` (or `Administrator`), then invite the bot to your server.
+4. Copy the Application ID (`CLIENT_ID`) from **General Information**.
 
-#### A. Tournament Structure
-* **4 Swiss Rounds** followed by a **Finals Stage**.
-* **Round 3 Cut**: After Swiss Round 3, the bottom third of players are eliminated from the tournament.
-* **Finals Qualification**: The top 6 players by Swiss Points advance to the Finals after Round 4.
-
-#### B. Matchmaking & Lobby Sizes
-* **Swiss Matchmaking**: Round 1 is randomly seeded. In Round 2 and beyond, players are paired by tournament performance (Swiss points DESC, Carry-Over points DESC, 1st places DESC), while avoiding rematches where possible.
-* **6-Player Pod Priority**: Partitions lobbies prioritizing full 6-player pods wherever mathematically possible, leaving the lowest point pods at the bottom short on users (e.g. 14 players -> `[6, 4, 4]`; 34 players -> five 6-player pods and one 4-player pod at the bottom).
-
-#### C. Swiss Scoring & Carry-Over Points
-* **Swiss Points**:
-  * 1st Place = 6 Points
-  * 2nd Place = 4 Points
-  * 3rd Place = 3 Points
-  * 4th Place = 2 Points
-  * 5th Place = 1 Point
-  * 6th Place = 0 Points
-* **Carry-Over Points (Banked for Finals)**:
-  * 1st Place = 4 Carry-Over Points
-  * 2nd Place = 2 Carry-Over Points
-  * 3rd–6th Place = 0 Carry-Over Points
-  * *Note*: Carry-Over Points are tracked separately, used as the 1st tiebreaker for Finals qualification, and serve as starting points in the Finals!
-* **Tied Placements**: Points for tied positions and the positions below are combined and divided equally.
-  * *Example*: Two players tie for 2nd: `(4 + 3) / 2 = 3.5 Swiss pts`, `(2 + 0) / 2 = 1.0 Carry-Over pts`.
-  * *Example*: Tie for 1st: `(6 + 4) / 2 = 5.0 Swiss pts`, `(4 + 2) / 2 = 3.0 Carry-Over pts`.
-
-#### D. Finals Break & Qualification
-* **15-Minute Break**: Automatically triggered after Round 4 for staff verification.
-* **Tiebreak Order for 6th Place**:
-  1. Total Carry-Over Points
-  2. Head-to-Head record
-  3. Live tiebreak lobby ruling
-
-#### E. Finals Scoring & "Checkmate" Win Condition
-* **Starting Scores**: Finalists begin with their accumulated Carry-Over Points. Swiss Points reset to 0.
-* **Finals Scoring**:
-  * 1st = 10 pts, 2nd = 8 pts, 3rd = 6 pts, 4th = 4 pts, 5th = 2 pts, 6th = 0 pts.
-* **Becoming Eligible to Win (Check State)**:
-  * A player becomes eligible to win once they have accumulated **20 or more Total Finals Points**.
-* **Winning the Tournament**:
-  * A player wins the championship when **BOTH** conditions are met:
-    1. They have accumulated at least 20 Finals Points.
-    2. They finish 1st place in a Finals lobby *while eligible*.
-
-#### F. Stuck Lobbies & Game Crashes
-* **Stuck Lobby Ruling**: Remaining players share 1st/2nd place points & carry-over points. Neither player may win the tournament from a stuck lobby.
-* **Game Crashes**:
-  * $\ge 3$ players remaining: Void lobby result and replay.
-  * 2 players remaining: Awarded a tie for 1st and 2nd.
-
----
-
-## 🗄️ Dual Database Support (Local SQLite or TiDB/MySQL)
-* **Zero-Setup Local SQLite (Default):** Leave `USE_TIDB=false` in `.env`. On first startup, the bot automatically creates `data/ouag_bot.db` and initializes all tables—no external database setup required.
-* **Cloud TiDB / MySQL (Optional):** Recommended only if deploying on ephemeral cloud containers that reset local files on restart. Create an empty database/cluster, set `USE_TIDB=true` with your credentials in `.env`, and the bot will create all tables automatically on startup.
-
----
-
-## 🚀 Quick Start Guide
-
-### Step 1: Create Your Discord Bot Application
-1. Go to the [Discord Developer Portal](https://discord.com/developers/applications).
-2. Click **New Application**, name it (e.g. `OUAG Lobby Organizer`), and click **Create**.
-3. Under **Bot**:
-   * Click **Reset Token** and copy your **Bot Token**.
-   * **No Privileged Gateway Intents are required** (leave *Presence*, *Server Members*, and *Message Content* off—the bot uses Discord Interactions only).
-4. Under **OAuth2** > **URL Generator**:
-   * Scopes: `bot`, `applications.commands`.
-   * Bot Permissions: `Administrator` (or `Manage Channels`, `Manage Roles`, `View Channels`, `Send Messages`, `Manage Messages`, `Create Private Threads`, `Embed Links`).
-   * Open the generated link to invite the bot to your Discord server.
-5. Copy your **Application ID** (`CLIENT_ID`) from **General Information**.
-
----
-
-### Step 2: Clone, Install & Configure `.env`
-
+### 2. Install & Configure
 ```bash
 git clone https://github.com/jetstrike/ouag-discord-bot.git
 cd ouag-discord-bot
 npm install
+cp .env.example .env
 ```
 
-Copy `.env.example` to `.env` and add your Discord credentials (`DISCORD_TOKEN` and `CLIENT_ID`):
+Fill in `.env` with your bot token and client ID:
 ```ini
 DISCORD_TOKEN=your_bot_token_here
 CLIENT_ID=your_client_id_here
 GUILD_ID=
 
-# SQLite (default, zero setup) or TiDB Cloud / MySQL:
 USE_TIDB=false
-# TIDB_HOST=gateway01.us-east-1.prod.aws.tidbcloud.com
-# TIDB_PORT=4000
-# TIDB_USER=your_username_here
-# TIDB_PASSWORD=your_password_here
-# TIDB_DATABASE=ouag_lobbies
-# TIDB_SSL=true
 ```
 
----
+By default (`USE_TIDB=false`), the bot uses SQLite (`data/ouag_bot.db`) and creates all tables on first launch—no database setup needed. If you deploy on a host that wipes local files on restart, set `USE_TIDB=true` and add your TiDB/MySQL credentials (`TIDB_HOST`, `TIDB_PORT`, `TIDB_USER`, `TIDB_PASSWORD`, `TIDB_DATABASE`) to `.env`; tables will be created automatically on startup.
 
-### Step 3: Run Tests & Start
-
+### 3. Run
 ```bash
-# Run automated verification suite (uses isolated in-memory SQLite)
 npm test
-
-# Start bot locally
 npm start
+```
 
-# Run 24/7 in background with PM2
+For background hosting with PM2:
+```bash
 npm run pm2:start
 npm run pm2:logs
 ```
 
----
+## Commands
 
-## 🔒 Privacy Policy
-
-See [`PRIVACY_POLICY.md`](./PRIVACY_POLICY.md) for details on what Discord and tournament data the bot stores, how it is used, and how to delete it.
-
----
-
-## 📖 Command Reference
-
-### Casual Lobbies
-| Command | Permission | Description |
+| Command | Who | What it does |
 |---|---|---|
-| `/casual setup [channel]` | `Manage Channels` | Creates the persistent Casual Queue Dashboard in the selected channel. |
+| `/casual setup [channel]` | Manage Channels | Posts the persistent casual queue in a channel. |
+| `/tournament create` | Manage Server | Creates a tournament (category channels or private threads). |
+| `/tournament start` | Coordinator | Starts Swiss Round 1. |
+| `/tournament next-round` | Coordinator | Starts the next Swiss round. |
+| `/tournament start-finals` | Coordinator | Starts Grand Finals Lobby #1 with the Top 6. |
+| `/tournament next-finals-round` | Coordinator | Starts the next Finals lobby if no one has won yet. |
+| `/tournament standings` | Everyone | Shows current Swiss or Finals standings. |
+| `/tournament cut [count]` | Coordinator | Manually eliminates the bottom `count` players. |
+| `/tournament rule-stuck [pod_id] [p1] [p2]` | Coordinator | Splits 1st/2nd for remaining players; disables championship win for that lobby. |
+| `/tournament crash-replay [pod_id]` | Coordinator | Voids a pod with 3+ players left so it can be replayed. |
+| `/tournament crash-two [pod_id] [p1] [p2]` | Coordinator | Awards a 1st/2nd tie when a game crashes with 2 players left. |
+| `/tournament add-player [player]` | Coordinator | Manually registers a player. |
+| `/tournament drop-player [player]` | Coordinator | Drops a player from the tournament. |
+| `/tournament add-bots [count]` | Coordinator | Adds 1–64 mock players for testing. |
+| `/tournament cleanup [tournament_id] [delete_category]` | Coordinator | Deletes leftover pod channels, threads, and issue tickets. |
+| `/tournament cancel` | Coordinator | Cancels the active tournament, cleans up rooms, and deletes its DB records. |
+| `/ouag-help` | Everyone | Shows a quick summary of casual and tournament rules. |
 
-### Tournament Mode
-| Command | Permission | Description |
-|---|---|---|
-| `/tournament create` | `Manage Server` | Creates a new Chekhov's Gum tournament (4 Swiss rounds, 6 finalists, balanced pods). |
-| `/tournament start` | Coordinator | Begins Swiss Round 1 (random seeding & balanced lobby sizes). |
-| `/tournament next-round` | Coordinator | Advances to Swiss Round 2, 3, or 4 (auto triggers Round 3 Cut and 15-min break). |
-| `/tournament start-finals` | Coordinator | Launches Grand Finals Lobby #1 with the Top 6 finalists. |
-| `/tournament next-finals-round` | Coordinator | Launches subsequent Finals lobbies if no champion has satisfied the win condition. |
-| `/tournament standings` | Everyone | Displays live Swiss standings or Finals checkmate standings. |
-| `/tournament cut [count]` | Coordinator | Manually executes or adjusts the Round 3 Cut line. |
-| `/tournament rule-stuck [pod_id] [p1] [p2]` | Coordinator | Rules a lobby stuck (remaining players share 1st/2nd; cannot win from stuck lobby). |
-| `/tournament crash-replay [pod_id]` | Coordinator | Game crashed with $\ge 3$ players. Voids match and resets pod for replay. |
-| `/tournament crash-two [pod_id] [p1] [p2]` | Coordinator | Game crashed with 2 players remaining. Awards tie for 1st and 2nd. |
-| `/tournament add-player [user]` | Coordinator | Manually registers a player. |
-| `/tournament drop-player [user]` | Coordinator | Drops a player from the tournament. |
-| `/tournament add-bots [count]` | Coordinator | Adds mock bot players (1–64) for solo testing & dry runs without pinging anyone. |
-| `/tournament cleanup [tournament_id] [delete_category]` | Coordinator | Cleans up all leftover pod channels, private threads, and issue ticket channels. |
-| `/tournament cancel` | Coordinator | Cancels the active tournament, deletes pod/issue channels, and clears DB records. |
-| `/ouag-help` | Everyone | Displays interactive bot guide and rules summary in Discord. |
+## Privacy
+
+See [PRIVACY_POLICY.md](./PRIVACY_POLICY.md) for what data the bot stores and how to remove it.
