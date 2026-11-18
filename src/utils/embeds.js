@@ -139,7 +139,9 @@ function createTournamentPodMessage(pod, players, roundNumber, isFinals = false,
 
     const isLeader = p.user_id === pod.leader_user_id ? ' 👑' : '';
     const isLive = p.is_eligible_to_win ? ' 🎯 [LIVE TO WIN]' : '';
-    return `\`#${idx + 1}\` <@${p.user_id}>${isLeader}${isLive} — ${placementText}`;
+    const isMock = !/^\d{17,20}$/.test(p.user_id);
+    const userDisplay = isMock ? `**${p.username || p.user_id}**` : `<@${p.user_id}>`;
+    return `\`#${idx + 1}\` ${userDisplay}${isLeader}${isLive} — ${placementText}`;
   });
 
   embed.addFields({

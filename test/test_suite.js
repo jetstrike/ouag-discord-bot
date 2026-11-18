@@ -830,6 +830,29 @@ async function runTests() {
     /already completed/i,
     'ruleCrashTwoPlayers must reject already-completed pods'
   );
+
+  // 13d. Concurrent startFinalsRound guard, Finals getActivePodForPlayer, and stale self-report override in rulePodStuck
+  await queries.initFinalsParticipants(tGuardId, ['400000000000000000', '400000000000000001', '400000000000000002', '400000000000000003', '400000000000000004', '400000000000000005']);
+  const [fStartA, fStartB] = await Promise.allSettled([
+    tournamentManager.startFinalsRound(e2eGuild, tGuardId),
+    tournamentManager.startFinalsRound(e2eGuild, tGuardId)
+  ]);
+  const fSuccesses = [fStartA, fStartB].filter(r => r.status === 'fulfilled');
+  assert.strictEqual(fSuccesses.length, 1, 'Concurrent startFinalsRound calls must only allow 1 Finals round to start');
+
+  const finalsPodObj = await queries.getActivePodForPlayer(tGuardId, 1, '400000000000000000', true);
+  assert(finalsPodObj && finalsPodObj.id === fSuccesses[0].value.podId, 'getActivePodForPlayer must resolve active Finals pod');
+
+  // Simulate stale self-reported placements on eliminated players before rulePodStuck
+  await queries.setPodPlayerPlacement(finalsPodObj.id, '400000000000000004', 1);
+  await queries.setPodPlayerPlacement(finalsPodObj.id, '400000000000000005', 2);
+  await assert.rejects(
+    () => tournamentManager.rulePodStuck(e2eGuild, finalsPodObj.id, ['400000000000000000', '400000000000000000']),
+    /distinct/i,
+    'rulePodStuck must reject duplicate players'
+  );
+  await tournamentManager.rulePodStuck(e2eGuild, finalsPodObj.id, ['400000000000000000', '400000000000000001']);
+  assert.strictEqual((await queries.getPodById(finalsPodObj.id)).status, 'completed', 'rulePodStuck must overwrite stale placements and complete cleanly');
   console.log('  ✅ Concurrency, ruling guards, tie validation, and thread auto-cleanup verified.');
 
   console.log('\n======================================================');

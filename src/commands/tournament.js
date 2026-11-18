@@ -13,7 +13,7 @@ const builder = new SlashCommandBuilder()
       .setName('create')
       .setDescription('Create a new OUAG tournament (4 Swiss rounds + Top 6 Finals)')
       .addStringOption(opt =>
-        opt.setName('name').setDescription('Tournament name (e.g. Galaxy Championship #1)').setRequired(true)
+        opt.setName('name').setDescription('Tournament name (e.g. Galaxy Championship #1)').setMaxLength(100).setRequired(true)
       )
       .addStringOption(opt =>
         opt
@@ -136,6 +136,8 @@ async function handleCreate(interaction, guild) {
     return interaction.reply({ content: '⚠️ You need `Manage Server` permission to create a tournament.', flags: MessageFlags.Ephemeral });
   }
 
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   const { options, channel } = interaction;
   const name = options.getString('name');
   const channelMode = options.getString('channel_mode');
@@ -164,9 +166,8 @@ async function handleCreate(interaction, guild) {
     await fullTourneyChannel.send(regMsg);
   }
 
-  return interaction.reply({
-    content: `✅ Tournament **"${name}"** created following Chekhov's Gum Rules! Registration is live above.`,
-    flags: MessageFlags.Ephemeral
+  return await interaction.editReply({
+    content: `✅ Tournament **"${name}"** created following Chekhov's Gum Rules! Registration is live above.`
   });
 }
 
@@ -262,8 +263,9 @@ async function handle(interaction, guild) {
     if (!Number.isInteger(cutCount) || cutCount <= 0) {
       return interaction.reply({ content: '⚠️ Cut count must be a positive integer greater than 0.', flags: MessageFlags.Ephemeral });
     }
+    await interaction.deferReply();
     const eliminated = await queries.eliminateBottomThird(activeTourney.id, cutCount);
-    return interaction.reply({
+    return await interaction.editReply({
       content: `✅ Eliminated ${eliminated.length} players from the tournament according to Swiss standings.`
     });
   }

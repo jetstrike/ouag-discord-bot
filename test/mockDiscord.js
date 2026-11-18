@@ -163,6 +163,9 @@ function createMockInteraction({
     deferReply: async () => {
       interaction.deferred = true;
     },
+    deferUpdate: async () => {
+      interaction.deferred = true;
+    },
     editReply: async (payload) => {
       interaction.replied = true;
       const entry = typeof payload === 'string' ? { content: payload } : payload;

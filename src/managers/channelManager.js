@@ -434,8 +434,11 @@ async function cleanupTournamentChannels(guild, tournament, options = {}) {
         const active = await parentChannel.threads.fetchActive().catch(() => null);
         result.deletedThreads += await deleteMatchingThreads(active?.threads, deletedIds);
 
-        const archived = await parentChannel.threads.fetchArchived().catch(() => null);
-        result.deletedThreads += await deleteMatchingThreads(archived?.threads, deletedIds);
+        const archivedPublic = await parentChannel.threads.fetchArchived().catch(() => null);
+        result.deletedThreads += await deleteMatchingThreads(archivedPublic?.threads, deletedIds);
+
+        const archivedPrivate = await parentChannel.threads.fetchArchived({ type: 'private' }).catch(() => null);
+        result.deletedThreads += await deleteMatchingThreads(archivedPrivate?.threads, deletedIds);
       }
     } catch (err) {}
   }

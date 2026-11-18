@@ -57,11 +57,11 @@ async function handlePodSubmitCode(interaction, podId, code) {
   const players = await queries.getPodPlayers(podId);
   const round = await queries.getRoundById(pod.round_id);
 
-  await refreshPodEmbed(interaction.channel, updatedPod, players, round, tournament);
-
   await interaction.reply({
     content: `✅ Lobby code set to **\`${cleanCode}\`**! All players can now join the in-game lobby. When ready, the Leader or Coordinator can click **Start Match**.`
   });
+
+  await refreshPodEmbed(interaction.channel, updatedPod, players, round, tournament);
 }
 
 /**
@@ -91,11 +91,11 @@ async function handlePodStartMatch(interaction, podId) {
   const players = await queries.getPodPlayers(podId);
   const round = await queries.getRoundById(pod.round_id);
 
-  await refreshPodEmbed(interaction.channel, updatedPod, players, round, tournament);
-
   await interaction.reply({
     content: `🚀 **Match Started!** Placements can now be reported using the **Report Placement** button below when the game concludes. Good luck!`
   });
+
+  await refreshPodEmbed(interaction.channel, updatedPod, players, round, tournament);
 }
 
 /**
@@ -118,12 +118,12 @@ async function handlePlayerReportPlacement(interaction, podId, placement) {
   const round = await queries.getRoundById(pod.round_id);
   const tournament = await queries.getTournamentById(pod.tournament_id);
 
-  await refreshPodEmbed(interaction.channel, pod, updatedPlayers, round, tournament);
-
   await interaction.reply({
     content: `✅ Recorded your placement as **Rank ${placement}**. (${updatedPlayers.filter(p => p.placement).length}/${players.length} players reported)`,
     flags: MessageFlags.Ephemeral
   });
+
+  await refreshPodEmbed(interaction.channel, pod, updatedPlayers, round, tournament);
 
   const reportedCount = updatedPlayers.filter(p => p.placement !== null).length;
   if (reportedCount === players.length) {
@@ -247,6 +247,23 @@ async function finalizePodResults(guild, pod, players, round, tournament, { allo
 }
 
 /**
+ * Validates that all specified ruling players are distinct and belong to the pod.
+ */
+function validateRulingPlayers(allPlayers, targetIds) {
+  const uniqueIds = new Set(targetIds);
+  if (uniqueIds.size !== targetIds.length || targetIds.length === 0) {
+    throw new Error('You must select distinct players for this ruling.');
+  }
+  const podIds = new Set(allPlayers.map(p => p.user_id));
+  for (const id of uniqueIds) {
+    if (!podIds.has(id)) {
+      throw new Error(`Player <@${id}> is not assigned to this pod.`);
+    }
+  }
+  return uniqueIds;
+}
+
+/**
  * Rule F.1: Officially rules a pod stuck due to trigger limits.
  */
 async function rulePodStuck(guild, podId, remainingPlayerIds) {
@@ -257,13 +274,14 @@ async function rulePodStuck(guild, podId, remainingPlayerIds) {
   const round = await queries.getRoundById(pod.round_id);
   const allPlayers = await queries.getPodPlayers(podId);
 
+  const remainingSet = validateRulingPlayers(allPlayers, remainingPlayerIds);
+
   for (const p of allPlayers) {
-    if (remainingPlayerIds.includes(p.user_id)) {
-      p.placement = 1;
-    } else if (!p.placement) {
-      p.placement = remainingPlayerIds.length + 1;
-    }
+    p.placement = remainingSet.has(p.user_id) ? 1 : remainingSet.size + 1;
   }
+
+  const check = scoring.validatePlacements(allPlayers.map(p => p.placement), allPlayers.length, { allowTies: true });
+  if (!check.valid) throw new Error(check.error);
 
   const marked = await queries.markPodStuck(podId);
   if (!marked) throw new Error(`Pod #${podId} is already completed.`);
@@ -300,13 +318,14 @@ async function ruleCrashTwoPlayers(guild, podId, player1Id, player2Id) {
   const round = await queries.getRoundById(pod.round_id);
   const allPlayers = await queries.getPodPlayers(podId);
 
+  const topTwoSet = validateRulingPlayers(allPlayers, [player1Id, player2Id]);
+
   for (const p of allPlayers) {
-    if (p.user_id === player1Id || p.user_id === player2Id) {
-      p.placement = 1;
-    } else if (!p.placement) {
-      p.placement = 3;
-    }
+    p.placement = topTwoSet.has(p.user_id) ? 1 : 3;
   }
+
+  const check = scoring.validatePlacements(allPlayers.map(p => p.placement), allPlayers.length, { allowTies: true });
+  if (!check.valid) throw new Error(check.error);
 
   await finalizePodResults(guild, pod, allPlayers, round, tournament, { allowTies: true });
 }

@@ -29,7 +29,8 @@ async function notifyPodOfDrop(guild, pod, userId) {
 
   if (pod.leader_user_id === userId) {
     const podPlayers = await queries.getPodPlayers(pod.id);
-    const remaining = podPlayers.filter(p => p.user_id !== userId);
+    const activeSet = new Set((await queries.getParticipants(pod.tournament_id, true)).map(p => p.user_id));
+    const remaining = podPlayers.filter(p => p.user_id !== userId && activeSet.has(p.user_id));
     if (remaining.length > 0) {
       const newLeader = remaining[0];
       await queries.updatePodLeader(pod.id, newLeader.user_id);
@@ -45,35 +46,35 @@ async function handleTournamentButton(interaction) {
 
   // 1. Tournament Registration
   if (customId.startsWith('tourney_reg_')) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const tournamentId = parseInt(customId.replace('tourney_reg_', ''), 10);
     const tournament = await queries.getTournamentById(tournamentId);
 
     if (!tournament || tournament.status !== 'registration') {
-      return interaction.reply({ content: '⚠️ Registration is not currently open for this tournament.', flags: MessageFlags.Ephemeral });
+      return interaction.editReply({ content: '⚠️ Registration is not currently open for this tournament.' });
     }
 
     await queries.registerParticipant(tournamentId, interaction.user.id, interaction.user.username);
     const participants = await queries.getParticipants(tournamentId, true);
 
-    // Update registration embed
     try {
       const regMsg = embeds.createRegistrationEmbed(tournament, participants.length);
       await interaction.message.edit(regMsg);
     } catch (e) {}
 
-    return interaction.reply({
-      content: `🎉 You have successfully registered for **${tournament.name}**! Total players: **${participants.length}**.`,
-      flags: MessageFlags.Ephemeral
+    return interaction.editReply({
+      content: `🎉 You have successfully registered for **${tournament.name}**! Total players: **${participants.length}**.`
     });
   }
 
   // 2. Tournament Withdrawal
   if (customId.startsWith('tourney_withdraw_')) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const tournamentId = parseInt(customId.replace('tourney_withdraw_', ''), 10);
     const tournament = await queries.getTournamentById(tournamentId);
 
     if (!tournament || tournament.status !== 'registration') {
-      return interaction.reply({ content: '⚠️ You cannot withdraw after tournament rounds have begun.', flags: MessageFlags.Ephemeral });
+      return interaction.editReply({ content: '⚠️ You cannot withdraw after tournament rounds have begun.' });
     }
 
     const removed = await queries.unregisterParticipant(tournamentId, interaction.user.id);
@@ -84,9 +85,8 @@ async function handleTournamentButton(interaction) {
       await interaction.message.edit(regMsg);
     } catch (e) {}
 
-    return interaction.reply({
-      content: removed ? 'ℹ️ You have withdrawn from the tournament.' : 'You were not registered.',
-      flags: MessageFlags.Ephemeral
+    return interaction.editReply({
+      content: removed ? 'ℹ️ You have withdrawn from the tournament.' : 'You were not registered.'
     });
   }
 
@@ -268,12 +268,13 @@ async function handleTournamentButton(interaction) {
 
   // 10. Confirm Drop
   if (customId.startsWith('tourney_confirm_drop_')) {
+    await interaction.deferUpdate();
     const parts = customId.split('_'); // ['tourney', 'confirm', 'drop', tournamentId, podId]
     const tournamentId = parseInt(parts[3], 10);
     const podId = parseInt(parts[4], 10) || 0;
 
     const tournament = await queries.getTournamentById(tournamentId);
-    if (!tournament) return interaction.update({ content: 'Tournament not found.', components: [] });
+    if (!tournament) return interaction.editReply({ content: 'Tournament not found.', components: [] });
 
     await queries.unregisterParticipant(tournamentId, interaction.user.id);
 
@@ -283,12 +284,16 @@ async function handleTournamentButton(interaction) {
     if (podId > 0) {
       const pod = await queries.getPodById(podId);
       await notifyPodOfDrop(targetGuild, pod, interaction.user.id);
-    } else if (tournament.current_round > 0) {
-      const activePod = await queries.getActivePodForPlayer(tournamentId, tournament.current_round, interaction.user.id);
-      await notifyPodOfDrop(targetGuild, activePod, interaction.user.id);
+    } else {
+      const isFinals = tournament.stage === 'finals';
+      const targetRoundNum = isFinals ? tournament.finals_round_number : tournament.current_round;
+      if (targetRoundNum > 0) {
+        const activePod = await queries.getActivePodForPlayer(tournamentId, targetRoundNum, interaction.user.id, isFinals);
+        await notifyPodOfDrop(targetGuild, activePod, interaction.user.id);
+      }
     }
 
-    return interaction.update({
+    return interaction.editReply({
       content: `🚪 You have successfully dropped from **${tournament.name}**. Thank you for playing!`,
       components: []
     });
@@ -360,34 +365,33 @@ async function handleTournamentModal(interaction) {
 
   // Coordinator override modal
   if (customId.startsWith('pod_modal_override_')) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const podId = parseInt(customId.replace('pod_modal_override_', ''), 10);
     const rawInput = interaction.fields.getTextInputValue('override_placements_input');
     const ranks = rawInput.trim().split(/\s+/).map(Number);
 
     const pod = await queries.getPodById(podId);
     if (!pod) {
-      return interaction.reply({ content: '⚠️ Pod not found.', flags: MessageFlags.Ephemeral });
+      return interaction.editReply({ content: '⚠️ Pod not found.' });
     }
     const players = await queries.getPodPlayers(podId);
     const round = await queries.getRoundById(pod.round_id);
     const tournament = await queries.getTournamentById(pod.tournament_id);
 
     if (!tournamentManager.isCoordinator(interaction.member, tournament, interaction)) {
-      return interaction.reply({ content: '⚠️ Only Tournament Coordinators can override match placements.', flags: MessageFlags.Ephemeral });
+      return interaction.editReply({ content: '⚠️ Only Tournament Coordinators can override match placements.' });
     }
 
     if (ranks.some(r => !Number.isInteger(r))) {
-      return interaction.reply({
-        content: '❌ Placements must be whole numbers separated by spaces (e.g. `1 2 3 4 5 6`).',
-        flags: MessageFlags.Ephemeral
+      return interaction.editReply({
+        content: '❌ Placements must be whole numbers separated by spaces (e.g. `1 2 3 4 5 6`).'
       });
     }
 
     const validation = scoring.validatePlacements(ranks, players.length);
     if (!validation.valid) {
-      return interaction.reply({
-        content: `❌ ${validation.error}`,
-        flags: MessageFlags.Ephemeral
+      return interaction.editReply({
+        content: `❌ ${validation.error}`
       });
     }
 
@@ -397,9 +401,8 @@ async function handleTournamentModal(interaction) {
       await queries.setPodPlayerPlacement(podId, players[i].user_id, ranks[i], 0);
     }
 
-    await interaction.reply({
-      content: '✅ Placements manually overridden. Validating and finalizing results...',
-      flags: MessageFlags.Ephemeral
+    await interaction.editReply({
+      content: '✅ Placements manually overridden. Validating and finalizing results...'
     });
 
     const targetGuild = interaction.guild || (interaction.guildId ? await interaction.client.guilds.fetch(interaction.guildId).catch(() => null) : null);

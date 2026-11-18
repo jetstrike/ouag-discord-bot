@@ -105,9 +105,12 @@ async function startFinalsRound(guild, tournamentId) {
     }
   }
 
-  const finalsRoundNumber = await queries.incrementFinalsRound(tournamentId);
-  await queries.updateTournamentStage(tournamentId, 'finals');
-  await queries.updateTournamentStatus(tournamentId, 'in_progress');
+  const nextFinalsRound = (tournament.finals_round_number || 0) + 1;
+  const claimed = await queries.claimNextFinalsRound(tournamentId, tournament.finals_round_number || 0, nextFinalsRound);
+  if (!claimed) {
+    throw new Error(`Finals Lobby #${nextFinalsRound} is already being started by another coordinator.`);
+  }
+  const finalsRoundNumber = nextFinalsRound;
 
   const roundId = await queries.createRound(tournamentId, finalsRoundNumber, 1);
   const leader = finalists[0];

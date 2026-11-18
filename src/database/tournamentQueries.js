@@ -73,6 +73,15 @@ async function incrementFinalsRound(tournamentId) {
   return row ? row.finals_round_number : 1;
 }
 
+async function claimNextFinalsRound(tournamentId, expectedFinalsRound, nextFinalsRound) {
+  const res = await db.run(
+    `UPDATE tournaments SET finals_round_number = ?, status = 'in_progress', stage = 'finals' 
+     WHERE id = ? AND finals_round_number = ?`,
+    [nextFinalsRound, tournamentId, expectedFinalsRound]
+  );
+  return res.changes > 0;
+}
+
 async function updateTournamentPoints(tournamentId, pointsArray) {
   await db.run(
     `UPDATE tournaments SET points_config = ? WHERE id = ?`,
@@ -222,12 +231,23 @@ async function updatePodLeader(podId, leaderUserId) {
   await db.run(`UPDATE tournament_pods SET leader_user_id = ? WHERE id = ?`, [leaderUserId, podId]);
 }
 
-async function getActivePodForPlayer(tournamentId, roundNumber, userId) {
+async function getActivePodForPlayer(tournamentId, roundNumber, userId, isFinals = null) {
+  if (isFinals !== null) {
+    return await db.get(
+      `SELECT p.* FROM tournament_pods p 
+       JOIN tournament_rounds r ON p.round_id = r.id 
+       JOIN tournament_pod_players pp ON p.id = pp.pod_id 
+       WHERE p.tournament_id = ? AND r.round_number = ? AND r.is_finals = ? AND pp.user_id = ? AND p.status != 'completed'
+       ORDER BY p.id DESC LIMIT 1`,
+      [tournamentId, roundNumber, isFinals ? 1 : 0, userId]
+    );
+  }
   return await db.get(
     `SELECT p.* FROM tournament_pods p 
      JOIN tournament_rounds r ON p.round_id = r.id 
      JOIN tournament_pod_players pp ON p.id = pp.pod_id 
-     WHERE p.tournament_id = ? AND r.round_number = ? AND pp.user_id = ?`,
+     WHERE p.tournament_id = ? AND r.round_number = ? AND pp.user_id = ? AND p.status != 'completed'
+     ORDER BY p.id DESC LIMIT 1`,
     [tournamentId, roundNumber, userId]
   );
 }
@@ -417,6 +437,7 @@ module.exports = {
   updateTournamentStage,
   updateTournamentCurrentRound,
   incrementFinalsRound,
+  claimNextFinalsRound,
   updateTournamentPoints,
   registerParticipant,
   unregisterParticipant,
