@@ -188,9 +188,27 @@ function renderDashboardHtml({ oauthConfigured }) {
 
       const issues = g.issueChannels || [];
       const casuals = g.casualLobbies || [];
+
+      if (issues.length > 0) {
+        html += '<div class="card" style="border-color:var(--red);background:rgba(240,71,71,0.12)">' +
+          '<div class="row" style="justify-content:space-between;margin-bottom:8px">' +
+          '<b style="color:#ff8a8a">🚨 ' + issues.length + ' Open Issue Report' + (issues.length > 1 ? 's' : '') + ' — Please handle in Discord</b>' +
+          '</div>' +
+          '<div class="row">' + issues.map(c =>
+            '<a class="btn danger" href="' + esc(c.discord_url) + '" target="_blank" rel="noopener">Open ' +
+            esc(c.channel_name ? '#' + c.channel_name : 'Ticket') + ' (' + esc(c.username || c.user_id) + ') in Discord ↗</a>'
+          ).join('') + '</div></div>';
+      }
+      const issuesBottomHtml = issues.length
+        ? '<ul>' + issues.map(c =>
+            '<li style="margin-bottom:6px"><b>' + esc(c.username || c.user_id) + '</b> — ' +
+            '<span class="code">' + esc(c.channel_name ? '#' + c.channel_name : c.channel_id) + '</span> ' +
+            '<a class="btn sec" style="padding:3px 8px;font-size:12px;margin-left:6px" href="' + esc(c.discord_url) + '" target="_blank" rel="noopener">Open in Discord ↗</a></li>'
+          ).join('') + '</ul>'
+        : '<p class="muted">None open.</p>';
+
       html += '<div class="grid">' +
-        '<div class="card"><h3 style="margin-top:0">Open Issue Channels (' + issues.length + ')</h3>' +
-        (issues.length ? '<ul>' + issues.map(c => '<li>Channel <span class="code">' + esc(c.channel_id) + '</span></li>').join('') + '</ul>' : '<p class="muted">None open.</p>') + '</div>' +
+        '<div class="card"><h3 style="margin-top:0">Open Issue Channels (' + issues.length + ')</h3>' + issuesBottomHtml + '</div>' +
         '<div class="card"><h3 style="margin-top:0">Active Casual Queues (' + casuals.length + ')</h3>' +
         (casuals.length ? '<ul>' + casuals.map(l => '<li>Lobby #' + l.id + ' — ' + l.players.length + '/6 players (Code: <span class="code">' + esc(l.lobby_code || 'NONE') + '</span>)</li>').join('') + '</ul>' : '<p class="muted">None active.</p>') + '</div>' +
         '</div>';

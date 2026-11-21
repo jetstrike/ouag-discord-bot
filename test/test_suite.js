@@ -938,12 +938,21 @@ async function runTests() {
     exp: Date.now() + 60000
   }, 'test_session_secret'))}`;
 
+  await queries.recordIssueChannel(webTourneyId, '555666777888999000', '500000000000000001');
+
   const authAdmin = await fetch(`http://127.0.0.1:${webPort}/api/admin/overview`, {
     headers: { Cookie: ownerCookie }
   });
   assert.strictEqual(authAdmin.status, 200);
   const authBody = await authAdmin.json();
   assert.strictEqual(authBody.guilds[0].pods[0].lobby_code, 'Z9X8', 'Admin view must include private lobby_code');
+  assert.strictEqual(authBody.guilds[0].issueChannels.length, 1, 'Admin view must list open issue channel');
+  assert.strictEqual(authBody.guilds[0].issueChannels[0].username, 'WebPlayer1', 'Issue channel must resolve reporter username');
+  assert.strictEqual(
+    authBody.guilds[0].issueChannels[0].discord_url,
+    `https://discord.com/channels/${e2eGuild.id}/555666777888999000`,
+    'Issue channel must include direct Discord link'
+  );
 
   const dropRes = await fetch(`http://127.0.0.1:${webPort}/api/admin/action`, {
     method: 'POST',

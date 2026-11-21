@@ -219,7 +219,13 @@ function createWebServer(client) {
               queries.getIssueChannels(tourney.id)
             ]);
             standings = st;
-            issueChannels = issues;
+            const nameByUserId = new Map(st.map(s => [s.user_id, s.username]));
+            issueChannels = issues.map(c => ({
+              ...c,
+              username: nameByUserId.get(c.user_id) || c.user_id,
+              channel_name: guild.channels?.cache?.get(c.channel_id)?.name || null,
+              discord_url: `https://discord.com/channels/${guild.id}/${c.channel_id}`
+            }));
             const byPod = new Map();
             for (const pp of podPlayers) {
               if (!byPod.has(pp.pod_id)) byPod.set(pp.pod_id, []);

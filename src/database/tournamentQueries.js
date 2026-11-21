@@ -461,7 +461,7 @@ async function recordIssueChannel(tournamentId, channelId, userId) {
 
 async function getIssueChannels(tournamentId) {
   return await db.all(
-    `SELECT channel_id FROM tournament_issue_channels WHERE tournament_id = ?`,
+    `SELECT channel_id, user_id, created_at FROM tournament_issue_channels WHERE tournament_id = ? ORDER BY created_at DESC`,
     [tournamentId]
   );
 }
