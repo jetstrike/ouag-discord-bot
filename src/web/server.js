@@ -277,9 +277,17 @@ function createWebServer(client) {
           const info = await roundManager.startFinalsRound(guild, tourney.id);
           return sendJson(res, 200, { message: `Finals Lobby #${info.finalsRoundNumber} started.` });
         }
-        if (action === 'cleanup') {
-          const summary = await channelManager.cleanupTournamentChannels(guild, tourney, { deleteCategory: Boolean(body.deleteCategory) });
-          return sendJson(res, 200, { message: `Cleaned up ${summary.deletedChannels} channels and ${summary.deletedThreads} threads.` });
+        if (action === 'cancel_tournament') {
+          const confirmName = String(body.confirmName || '').trim();
+          if (confirmName !== tourney.name) {
+            return sendJson(res, 400, { error: `Type "${tourney.name}" exactly to confirm cancellation.` });
+          }
+          const summary = await channelManager.cleanupTournamentChannels(guild, tourney, { deleteCategory: false });
+          await queries.cancelTournament(tourney.id);
+          webhookService.notifyWebhooks('tournament_cancelled').catch(() => null);
+          return sendJson(res, 200, {
+            message: `Tournament "${tourney.name}" cancelled (${summary.deletedChannels} channels, ${summary.deletedThreads} threads cleaned up).`
+          });
         }
         if (action === 'drop_player') {
           await queries.unregisterParticipant(tourney.id, String(body.userId || ''));
@@ -295,7 +303,13 @@ function createWebServer(client) {
         }
 
         if (action === 'override_pod') {
-          const ranks = String(body.placements || '').trim().split(/\s+/).map(Number);
+          let ranks;
+          if (body.placementsByUserId && typeof body.placementsByUserId === 'object') {
+            const podPlayers = await queries.getPodPlayers(podId);
+            ranks = podPlayers.map(p => Number(body.placementsByUserId[p.user_id]));
+          } else {
+            ranks = String(body.placements || '').trim().split(/\s+/).map(Number);
+          }
           await podManager.overridePodPlacements(guild, podId, ranks);
           return sendJson(res, 200, { message: `Pod #${pod.pod_number} placements overridden.` });
         }

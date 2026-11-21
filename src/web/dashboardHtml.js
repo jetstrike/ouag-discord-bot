@@ -13,7 +13,7 @@ function renderDashboardHtml({ oauthConfigured }) {
     header h1 { margin: 0; font-size: 18px; }
     main { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
     button, a.btn { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; text-decoration: none; display: inline-block; }
     button.sec { background: #2d3343; }
@@ -29,7 +29,11 @@ function renderDashboardHtml({ oauthConfigured }) {
     .badge.completed { background: rgba(67,181,129,0.2); color: var(--green); }
     .muted { color: var(--muted); font-size: 13px; }
     .code { font-family: monospace; background: #10131a; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); }
-    #toast { position: fixed; bottom: 20px; right: 20px; background: #232734; border: 1px solid var(--border); padding: 10px 16px; border-radius: 8px; display: none; max-width: 380px; z-index: 99; }
+    #toast { position: fixed; bottom: 20px; right: 20px; background: #232734; border: 1px solid var(--border); padding: 10px 16px; border-radius: 8px; display: none; max-width: 380px; z-index: 200; }
+    #modalBackdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; padding: 16px; z-index: 150; }
+    #modalBox { background: var(--card); border: 1px solid var(--border); border-radius: 10px; width: 100%; max-width: 460px; padding: 20px; }
+    .modal-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 12px; }
+    .modal-row:last-child { border-bottom: 0; }
   </style>
 </head>
 <body>
@@ -40,9 +44,21 @@ function renderDashboardHtml({ oauthConfigured }) {
   <main id="app"><div class="card muted">Loading...</div></main>
   <div id="toast"></div>
 
+  <div id="modalBackdrop">
+    <div id="modalBox">
+      <h3 id="modalTitle" style="margin:0 0 12px 0"></h3>
+      <div id="modalBody" style="margin-bottom:16px"></div>
+      <div class="row" style="justify-content:flex-end">
+        <button class="sec" onclick="closeModal()">Cancel</button>
+        <button id="modalConfirmBtn">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const OAUTH_CONFIGURED = ${JSON.stringify(oauthConfigured)};
     let state = { user: null, guilds: [], selectedGuildId: null };
+    let modalHandler = null;
 
     function esc(s) {
       return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -54,6 +70,26 @@ function renderDashboardHtml({ oauthConfigured }) {
       el.style.borderColor = isErr ? '#f04747' : '#43b581';
       el.style.display = 'block';
       setTimeout(() => { el.style.display = 'none'; }, 4000);
+    }
+
+    function openModal(title, bodyHtml, confirmLabel, confirmClass, onConfirm) {
+      document.getElementById('modalTitle').textContent = title;
+      document.getElementById('modalBody').innerHTML = bodyHtml;
+      const btn = document.getElementById('modalConfirmBtn');
+      btn.textContent = confirmLabel;
+      btn.className = confirmClass || '';
+      modalHandler = onConfirm;
+      btn.onclick = async () => {
+        if (!modalHandler) return;
+        const shouldClose = await modalHandler();
+        if (shouldClose !== false) closeModal();
+      };
+      document.getElementById('modalBackdrop').style.display = 'flex';
+    }
+
+    function closeModal() {
+      document.getElementById('modalBackdrop').style.display = 'none';
+      modalHandler = null;
     }
 
     async function api(url, opts = {}) {
@@ -71,24 +107,101 @@ function renderDashboardHtml({ oauthConfigured }) {
         });
         toast(res.message || 'Done');
         await loadOverview();
+        return true;
       } catch (err) {
         toast(err.message, true);
+        return false;
       }
     }
 
-    async function promptOverride(podId, count) {
-      const raw = prompt('Enter ' + count + ' space-separated placements (e.g. 1 2 3 4 5 6):');
-      if (!raw) return;
-      await doAction('override_pod', { podId, placements: raw });
+    function findPod(podId) {
+      const g = state.guilds.find(x => x.id === state.selectedGuildId);
+      return g?.pods?.find(p => p.id === podId);
     }
 
-    async function promptTwoPlayers(action, podId, players) {
-      const list = players.map((p, i) => (i + 1) + ': ' + p.username).join('\\n');
-      const raw = prompt('Enter two player numbers separated by space for ' + action + ':\\n' + list);
-      if (!raw) return;
-      const idxs = raw.trim().split(/\\s+/).map(n => parseInt(n, 10) - 1);
-      if (idxs.length !== 2 || idxs.some(i => !players[i])) return toast('Invalid player numbers', true);
-      await doAction(action, { podId, player1Id: players[idxs[0]].user_id, player2Id: players[idxs[1]].user_id });
+    function openOverrideModal(podId) {
+      const pod = findPod(podId);
+      if (!pod) return;
+      const players = pod.players || [];
+      const count = players.length;
+      const rows = players.map((pl, idx) => {
+        const current = pl.placement || (idx + 1);
+        const options = Array.from({ length: count }, (_, i) => {
+          const r = i + 1;
+          return '<option value="' + r + '"' + (r === current ? ' selected' : '') + '>Rank #' + r + '</option>';
+        }).join('');
+        return '<div class="modal-row"><span><b>' + esc(pl.username) + '</b></span>' +
+          '<select data-uid="' + esc(pl.user_id) + '" class="ov-rank">' + options + '</select></div>';
+      }).join('');
+
+      openModal(
+        'Override Placements — Pod #' + pod.pod_number,
+        '<p class="muted" style="margin-top:0">Assign each player\\'s final rank (select the same rank for ties):</p>' + rows,
+        'Save Placements',
+        '',
+        async () => {
+          const placementsByUserId = {};
+          document.querySelectorAll('.ov-rank').forEach(sel => {
+            placementsByUserId[sel.getAttribute('data-uid')] = Number(sel.value);
+          });
+          return await doAction('override_pod', { podId, placementsByUserId });
+        }
+      );
+    }
+
+    function openTwoPlayerModal(action, podId) {
+      const pod = findPod(podId);
+      if (!pod) return;
+      const label = action === 'rule_stuck' ? 'Rule Stuck (Remaining 2 Players)' : 'Crash 2-Player Tie';
+      const rows = (pod.players || []).map(pl =>
+        '<label class="modal-row" style="cursor:pointer"><span>' + esc(pl.username) + '</span>' +
+        '<input type="checkbox" class="tp-check" value="' + esc(pl.user_id) + '" /></label>'
+      ).join('');
+
+      openModal(
+        label + ' — Pod #' + pod.pod_number,
+        '<p class="muted" style="margin-top:0">Select the 2 remaining players:</p>' + rows,
+        'Apply Ruling',
+        'warn',
+        async () => {
+          const selected = Array.from(document.querySelectorAll('.tp-check:checked')).map(el => el.value);
+          if (selected.length !== 2) {
+            toast('Select exactly 2 players.', true);
+            return false;
+          }
+          return await doAction(action, { podId, player1Id: selected[0], player2Id: selected[1] });
+        }
+      );
+    }
+
+    function openDropModal(userId, username) {
+      openModal(
+        'Confirm Player Drop',
+        '<p>Are you sure you want to drop <b>' + esc(username) + '</b> from the tournament?</p>' +
+        '<p class="muted">They will not be paired in future rounds.</p>',
+        'Confirm Drop',
+        'danger',
+        async () => await doAction('drop_player', { userId })
+      );
+    }
+
+    function openCancelTournamentModal(tourneyName) {
+      openModal(
+        'Cancel Tournament',
+        '<p>This will permanently delete all tournament channels, threads, and database records for <b>' + esc(tourneyName) + '</b>.</p>' +
+        '<p class="muted">Type the exact tournament name below to confirm:</p>' +
+        '<input id="cancelConfirmInput" style="width:100%" placeholder="' + esc(tourneyName) + '" />',
+        'Cancel Tournament',
+        'danger',
+        async () => {
+          const confirmName = document.getElementById('cancelConfirmInput').value.trim();
+          if (confirmName !== tourneyName) {
+            toast('Tournament name does not match.', true);
+            return false;
+          }
+          return await doAction('cancel_tournament', { confirmName });
+        }
+      );
     }
 
     async function loadOverview() {
@@ -135,6 +248,18 @@ function renderDashboardHtml({ oauthConfigured }) {
         '<div class="row"><a class="btn sec" href="/api/public/tournaments" target="_blank">Public JSON</a></div>' +
         '</div>';
 
+      const issues = g.issueChannels || [];
+      if (issues.length > 0) {
+        html += '<div class="card" style="border-color:var(--red);background:rgba(240,71,71,0.12)">' +
+          '<div class="row" style="justify-content:space-between;margin-bottom:8px">' +
+          '<b style="color:#ff8a8a">🚨 ' + issues.length + ' Open Issue Report' + (issues.length > 1 ? 's' : '') + ' — Please handle in Discord</b>' +
+          '</div>' +
+          '<div class="row">' + issues.map(c =>
+            '<a class="btn danger" href="' + esc(c.discord_url) + '" target="_blank" rel="noopener">Open ' +
+            esc(c.channel_name ? '#' + c.channel_name : 'Ticket') + ' (' + esc(c.username || c.user_id) + ') in Discord ↗</a>'
+          ).join('') + '</div></div>';
+      }
+
       if (!t) {
         html += '<div class="card"><p class="muted">No active or recent tournament in <b>' + esc(g.name) + '</b>.</p></div>';
       } else {
@@ -147,7 +272,7 @@ function renderDashboardHtml({ oauthConfigured }) {
           '<div class="row">' +
           '<button onclick="doAction(\\'start_round\\')">Start / Next Swiss Round</button>' +
           '<button class="warn" onclick="doAction(\\'start_finals\\')">Start / Next Finals</button>' +
-          '<button class="sec" onclick="doAction(\\'cleanup\\')">Cleanup Channels</button>' +
+          '<button class="danger" onclick=\\'openCancelTournamentModal(' + JSON.stringify(t.name).replace(/'/g, '&#39;') + ')\\'>Cancel Tournament</button>' +
           '</div></div></div>';
 
         const pods = g.pods || [];
@@ -164,12 +289,12 @@ function renderDashboardHtml({ oauthConfigured }) {
               '<div class="muted" style="margin-bottom:8px">Code: <span class="code">' + esc(p.lobby_code || 'NONE') + '</span></div>' +
               '<ul style="margin:0 0 10px 18px;padding:0;font-size:13px">' + pRows + '</ul>' +
               '<div class="row">' +
-                '<button class="sec" onclick="promptOverride(' + p.id + ',' + (p.players || []).length + ')">Override</button>' +
+                '<button class="sec" onclick="openOverrideModal(' + p.id + ')">Override</button>' +
                 (p.status === 'completed'
                   ? '<button class="warn" onclick="doAction(\\'restart_pod\\',{podId:' + p.id + '})">Restart Pod</button>'
                   : '<button class="sec" onclick="doAction(\\'crash_replay\\',{podId:' + p.id + '})">Crash Replay</button>' +
-                    '<button class="warn" onclick=\\'promptTwoPlayers("rule_stuck",' + p.id + ',' + JSON.stringify(p.players || []).replace(/'/g, '&#39;') + ')\\'>Rule Stuck</button>' +
-                    '<button class="warn" onclick=\\'promptTwoPlayers("crash_two",' + p.id + ',' + JSON.stringify(p.players || []).replace(/'/g, '&#39;') + ')\\'>Crash 2P</button>') +
+                    '<button class="warn" onclick="openTwoPlayerModal(\\'rule_stuck\\',' + p.id + ')">Rule Stuck</button>' +
+                    '<button class="warn" onclick="openTwoPlayerModal(\\'crash_two\\',' + p.id + ')">Crash 2P</button>') +
               '</div></div>';
           }).join('') + '</div>') + '</div>';
 
@@ -181,24 +306,12 @@ function renderDashboardHtml({ oauthConfigured }) {
             '<td><span class="badge">' + esc(s.status) + '</span></td><td>' + s.points + '</td><td>' + s.carry_over_points + '</td>' +
             '<td>' + s.finals_points + '</td><td>' + s.first_places + '</td>' +
             '<td>' + (s.status === 'registered' || s.status === 'finalist'
-              ? '<button class="danger" onclick="doAction(\\'drop_player\\',{userId:\\'' + esc(s.user_id) + '\\'})">Drop</button>' : '') +
+              ? '<button class="danger" onclick=\\'openDropModal(' + JSON.stringify(s.user_id) + ',' + JSON.stringify(s.username).replace(/'/g, '&#39;') + ')\\'>Drop</button>' : '') +
             '</td></tr>'
           ).join('') + '</tbody></table></div>';
       }
 
-      const issues = g.issueChannels || [];
       const casuals = g.casualLobbies || [];
-
-      if (issues.length > 0) {
-        html += '<div class="card" style="border-color:var(--red);background:rgba(240,71,71,0.12)">' +
-          '<div class="row" style="justify-content:space-between;margin-bottom:8px">' +
-          '<b style="color:#ff8a8a">🚨 ' + issues.length + ' Open Issue Report' + (issues.length > 1 ? 's' : '') + ' — Please handle in Discord</b>' +
-          '</div>' +
-          '<div class="row">' + issues.map(c =>
-            '<a class="btn danger" href="' + esc(c.discord_url) + '" target="_blank" rel="noopener">Open ' +
-            esc(c.channel_name ? '#' + c.channel_name : 'Ticket') + ' (' + esc(c.username || c.user_id) + ') in Discord ↗</a>'
-          ).join('') + '</div></div>';
-      }
       const issuesBottomHtml = issues.length
         ? '<ul>' + issues.map(c =>
             '<li style="margin-bottom:6px"><b>' + esc(c.username || c.user_id) + '</b> — ' +
@@ -217,7 +330,7 @@ function renderDashboardHtml({ oauthConfigured }) {
     }
 
     loadOverview();
-    setInterval(() => { if (state.user) loadOverview(); }, 10000);
+    setInterval(() => { if (state.user && !modalHandler) loadOverview(); }, 10000);
   </script>
 </body>
 </html>`;

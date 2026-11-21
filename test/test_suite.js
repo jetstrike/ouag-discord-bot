@@ -991,12 +991,54 @@ async function runTests() {
   assert.strictEqual(dropRes.status, 200);
   assert.strictEqual((await queries.getParticipant(webTourneyId, '500000000000000000')).status, 'dropped');
 
+  // Test override_pod with placementsByUserId
+  const webPodId = webRound.pods[0].podId;
+  const webPodPlayers = await queries.getPodPlayers(webPodId);
+  const placementsByUserId = {};
+  webPodPlayers.forEach((p, idx) => { placementsByUserId[p.user_id] = idx + 1; });
+  const ovRes = await fetch(`http://127.0.0.1:${webPort}/api/admin/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: ownerCookie },
+    body: JSON.stringify({ guildId: e2eGuild.id, action: 'override_pod', podId: webPodId, placementsByUserId })
+  });
+  assert.strictEqual(ovRes.status, 200);
+  assert.strictEqual((await queries.getPodById(webPodId)).status, 'completed');
+
+  // Test cancel_tournament requires exact tournament name confirmation
+  const badCancelRes = await fetch(`http://127.0.0.1:${webPort}/api/admin/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: ownerCookie },
+    body: JSON.stringify({ guildId: e2eGuild.id, action: 'cancel_tournament', confirmName: 'Wrong Name' })
+  });
+  assert.strictEqual(badCancelRes.status, 400, 'cancel_tournament must reject mismatched tournament name');
+  assert(await queries.getTournamentById(webTourneyId), 'Tournament must still exist after failed cancel');
+
+  const okCancelRes = await fetch(`http://127.0.0.1:${webPort}/api/admin/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: ownerCookie },
+    body: JSON.stringify({ guildId: e2eGuild.id, action: 'cancel_tournament', confirmName: 'Web API Tourney' })
+  });
+  assert.strictEqual(okCancelRes.status, 200);
+  assert.strictEqual(await queries.getTournamentById(webTourneyId), null, 'Tournament must be deleted after confirmed cancel');
+
   await new Promise(resolve => webServer.close(resolve));
   console.log('  ✅ Public webhooks, HMAC signatures, and credentialed admin web server verified.');
 
   // 15. Override & Restart Completed Pods (Score Rollback Verification)
   console.log('\n[Test 15] Testing Completed Pod Override & Restart (Score Rollback)...');
-  const rbPodId = webRound.pods[0].podId;
+  const rbTourneyId = await queries.createTournament({
+    guildId: e2eGuild.id,
+    name: 'Rollback Test Tourney',
+    channelMode: 'category',
+    tournamentChannelId: tourneyCh.id,
+    resultsChannelId: resultsCh.id,
+    createdBy: adminUser.id
+  });
+  for (let i = 0; i < 6; i++) {
+    await queries.registerParticipant(rbTourneyId, `60000000000000000${i}`, `RbPlayer${i}`);
+  }
+  const rbRound = await tournamentManager.startRound(e2eGuild, rbTourneyId);
+  const rbPodId = rbRound.pods[0].podId;
   await tournamentManager.overridePodPlacements(e2eGuild, rbPodId, [1, 2, 3, 4, 5, 6]);
   const rbPlayers = await queries.getPodPlayers(rbPodId);
   assert.strictEqual((await queries.getPodById(rbPodId)).status, 'completed');
@@ -1008,8 +1050,8 @@ async function runTests() {
     optionValues: { pod_id: rbPodId, placements: '6 5 4 3 2 1' }
   }));
 
-  const pFirstBefore = await queries.getParticipant(webTourneyId, rbPlayers[0].user_id);
-  const pLastNowFirst = await queries.getParticipant(webTourneyId, rbPlayers[5].user_id);
+  const pFirstBefore = await queries.getParticipant(rbTourneyId, rbPlayers[0].user_id);
+  const pLastNowFirst = await queries.getParticipant(rbTourneyId, rbPlayers[5].user_id);
   assert.strictEqual(pFirstBefore.points, 0, 'Former 1st (now 6th) must have 0 Swiss pts after rollback + override');
   assert.strictEqual(pFirstBefore.matches_played, 1, 'matches_played must remain 1 (not 2)');
   assert.strictEqual(pFirstBefore.first_places, 0, 'Former 1st must have 0 first_places after override');
@@ -1025,7 +1067,7 @@ async function runTests() {
   }));
   const restartedPod = await queries.getPodById(rbPodId);
   assert.strictEqual(restartedPod.status, 'waiting_code', 'Restarted pod must return to waiting_code');
-  const pReset = await queries.getParticipant(webTourneyId, rbPlayers[5].user_id);
+  const pReset = await queries.getParticipant(rbTourneyId, rbPlayers[5].user_id);
   assert.strictEqual(pReset.points, 0, 'Points must be rolled back to 0 on pod restart');
   assert.strictEqual(pReset.carry_over_points, 0, 'Carry-over must be rolled back to 0 on pod restart');
   assert.strictEqual(pReset.matches_played, 0, 'matches_played must be rolled back to 0 on pod restart');
