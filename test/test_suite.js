@@ -846,8 +846,8 @@ async function runTests() {
   await tournamentManager.simulatePodMatch(e2eGuild, guardPodId);
   const guardPodAfter = await queries.getPodById(guardPodId);
   const guardThread = await e2eGuild.channels.fetch(guardPodAfter.channel_id);
-  assert.strictEqual(guardThread.archived, true, 'Thread-mode pod room must auto-archive upon pod completion');
-  assert.strictEqual(guardThread.locked, true, 'Thread-mode pod room must auto-lock upon pod completion');
+  assert.strictEqual(guardThread.archived, false, 'Pod room must stay open until the next round starts');
+  assert.strictEqual(guardThread.locked, false, 'Pod room must stay unlocked until the next round starts');
 
   await assert.rejects(
     () => tournamentManager.rulePodStuck(e2eGuild, guardPodId, ['400000000000000000', '400000000000000001']),
@@ -859,6 +859,11 @@ async function runTests() {
     /already completed/i,
     'ruleCrashTwoPlayers must reject already-completed pods'
   );
+
+  // Starting Round 2 cleans up Round 1's pod room
+  await tournamentManager.startRound(e2eGuild, tGuardId);
+  assert.strictEqual(guardThread.archived, true, 'Round 1 pod room must archive when Round 2 starts');
+  assert.strictEqual(guardThread.locked, true, 'Round 1 pod room must lock when Round 2 starts');
 
   // 13d. Concurrent startFinalsRound guard, Finals getActivePodForPlayer, and stale self-report override in rulePodStuck
   await queries.initFinalsParticipants(tGuardId, ['400000000000000000', '400000000000000001', '400000000000000002', '400000000000000003', '400000000000000004', '400000000000000005']);

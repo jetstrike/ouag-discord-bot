@@ -6,6 +6,19 @@ const webhookService = require('../services/webhookService');
 const config = require('../config');
 
 /**
+ * Cleans up all pod rooms belonging to a finished round.
+ */
+async function cleanupRoundPodRooms(guild, tournament, roundId) {
+  if (!guild || !roundId) return;
+  const pods = await queries.getPodsForRound(roundId);
+  for (const pod of pods) {
+    if (pod.channel_id) {
+      await channelManager.cleanupPodRoom(guild, pod.channel_id, tournament.channel_mode);
+    }
+  }
+}
+
+/**
  * Starts a new Swiss Round (Rounds 1 through 4).
  */
 async function startRound(guild, tournamentId) {
@@ -21,8 +34,9 @@ async function startRound(guild, tournamentId) {
     throw new Error(`All ${config.TOURNAMENT_RULES.SWISS_ROUNDS} Swiss rounds have concluded. Use /tournament start-finals to start the Finals.`);
   }
 
+  let prevRound = null;
   if (tournament.current_round > 0) {
-    const prevRound = await queries.getRoundByTournamentAndNumber(tournamentId, tournament.current_round, 0);
+    prevRound = await queries.getRoundByTournamentAndNumber(tournamentId, tournament.current_round, 0);
     if (prevRound) {
       const prevPods = await queries.getPodsForRound(prevRound.id);
       const incomplete = prevPods.filter(p => p.status !== 'completed');
@@ -40,6 +54,10 @@ async function startRound(guild, tournamentId) {
   const claimed = await queries.claimNextRound(tournamentId, tournament.current_round, nextRoundNumber);
   if (!claimed) {
     throw new Error(`Swiss Round ${nextRoundNumber} is already being started by another coordinator.`);
+  }
+
+  if (prevRound) {
+    await cleanupRoundPodRooms(guild, tournament, prevRound.id);
   }
 
   const roundId = await queries.createRound(tournamentId, nextRoundNumber, 0);
@@ -97,6 +115,7 @@ async function startFinalsRound(guild, tournamentId) {
     throw new Error(`Need exactly ${config.TOURNAMENT_RULES.FINALS_QUALIFIERS} qualified finalists. Check standings after Round 4.`);
   }
 
+  let prevRoundToCleanup = null;
   if (tournament.finals_round_number > 0) {
     const prevFinalsRound = await queries.getRoundByTournamentAndNumber(tournamentId, tournament.finals_round_number, 1);
     if (prevFinalsRound) {
@@ -104,7 +123,10 @@ async function startFinalsRound(guild, tournamentId) {
       if (prevPods.some(p => p.status !== 'completed')) {
         throw new Error(`Finals Lobby #${tournament.finals_round_number} is still in progress. Finish or rule it before starting the next lobby.`);
       }
+      prevRoundToCleanup = prevFinalsRound;
     }
+  } else if (tournament.current_round > 0) {
+    prevRoundToCleanup = await queries.getRoundByTournamentAndNumber(tournamentId, tournament.current_round, 0);
   }
 
   const nextFinalsRound = (tournament.finals_round_number || 0) + 1;
@@ -113,6 +135,10 @@ async function startFinalsRound(guild, tournamentId) {
     throw new Error(`Finals Lobby #${nextFinalsRound} is already being started by another coordinator.`);
   }
   const finalsRoundNumber = nextFinalsRound;
+
+  if (prevRoundToCleanup) {
+    await cleanupRoundPodRooms(guild, tournament, prevRoundToCleanup.id);
+  }
 
   const roundId = await queries.createRound(tournamentId, finalsRoundNumber, 1);
   const leader = finalists[0];
@@ -154,6 +180,7 @@ async function handleRoundCompletion(guild, tournament, round, isFinals, champio
     if (champion) {
       await queries.updateTournamentStatus(tournament.id, 'completed');
       await queries.updateTournamentStage(tournament.id, 'completed');
+      await cleanupRoundPodRooms(guild, tournament, round.id);
 
       await tourneyChannel.send({
         content: `👑 **CONGRATULATIONS TO THE ONCE UPON A GALAXY CHAMPION!** 👑\n` +
