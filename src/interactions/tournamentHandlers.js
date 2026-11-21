@@ -377,39 +377,19 @@ async function handleTournamentModal(interaction) {
     if (!pod) {
       return interaction.editReply({ content: '⚠️ Pod not found.' });
     }
-    const players = await queries.getPodPlayers(podId);
-    const round = await queries.getRoundById(pod.round_id);
     const tournament = await queries.getTournamentById(pod.tournament_id);
 
     if (!tournamentManager.isCoordinator(interaction.member, tournament, interaction)) {
       return interaction.editReply({ content: '⚠️ Only Tournament Coordinators can override match placements.' });
     }
 
-    if (ranks.some(r => !Number.isInteger(r))) {
-      return interaction.editReply({
-        content: '❌ Placements must be whole numbers separated by spaces (e.g. `1 2 3 4 5 6`).'
-      });
-    }
-
-    const validation = scoring.validatePlacements(ranks, players.length);
-    if (!validation.valid) {
-      return interaction.editReply({
-        content: `❌ ${validation.error}`
-      });
-    }
-
-    // Apply manual placements to players in current order
-    for (let i = 0; i < players.length; i++) {
-      players[i].placement = ranks[i];
-      await queries.setPodPlayerPlacement(podId, players[i].user_id, ranks[i], 0);
-    }
-
-    await interaction.editReply({
-      content: '✅ Placements manually overridden. Validating and finalizing results...'
-    });
-
     const targetGuild = interaction.guild || (interaction.guildId ? await interaction.client.guilds.fetch(interaction.guildId).catch(() => null) : null);
-    return await tournamentManager.finalizePodResults(targetGuild, pod, players, round, tournament, { allowTies: true });
+    try {
+      await tournamentManager.overridePodPlacements(targetGuild, podId, ranks);
+      return await interaction.editReply({ content: '✅ Placements overridden and results finalized.' });
+    } catch (err) {
+      return await interaction.editReply({ content: `❌ ${err.message}` });
+    }
   }
 }
 

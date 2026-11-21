@@ -290,21 +290,13 @@ function createWebServer(client) {
 
         if (action === 'override_pod') {
           const ranks = String(body.placements || '').trim().split(/\s+/).map(Number);
-          const players = await queries.getPodPlayers(podId);
-          if (ranks.some(r => !Number.isInteger(r))) {
-            return sendJson(res, 400, { error: 'Placements must be whole numbers separated by spaces.' });
-          }
-          const validation = scoring.validatePlacements(ranks, players.length, { allowTies: true });
-          if (!validation.valid) {
-            return sendJson(res, 400, { error: validation.error });
-          }
-          for (let i = 0; i < players.length; i++) {
-            players[i].placement = ranks[i];
-            await queries.setPodPlayerPlacement(podId, players[i].user_id, ranks[i], 0);
-          }
-          const round = await queries.getRoundById(pod.round_id);
-          await podManager.finalizePodResults(guild, pod, players, round, tourney, { allowTies: true });
+          await podManager.overridePodPlacements(guild, podId, ranks);
           return sendJson(res, 200, { message: `Pod #${pod.pod_number} placements overridden.` });
+        }
+
+        if (action === 'restart_pod') {
+          await podManager.restartPod(guild, podId);
+          return sendJson(res, 200, { message: `Pod #${pod.pod_number} restarted.` });
         }
 
         if (action === 'rule_stuck') {

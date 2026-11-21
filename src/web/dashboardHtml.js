@@ -163,12 +163,14 @@ function renderDashboardHtml({ oauthConfigured }) {
               '<span class="badge ' + esc(p.status) + '">' + esc(p.status) + '</span></div>' +
               '<div class="muted" style="margin-bottom:8px">Code: <span class="code">' + esc(p.lobby_code || 'NONE') + '</span></div>' +
               '<ul style="margin:0 0 10px 18px;padding:0;font-size:13px">' + pRows + '</ul>' +
-              (p.status !== 'completed' ? '<div class="row">' +
+              '<div class="row">' +
                 '<button class="sec" onclick="promptOverride(' + p.id + ',' + (p.players || []).length + ')">Override</button>' +
-                '<button class="sec" onclick="doAction(\\'crash_replay\\',{podId:' + p.id + '})">Crash Replay</button>' +
-                '<button class="warn" onclick=\\'promptTwoPlayers("rule_stuck",' + p.id + ',' + JSON.stringify(p.players || []).replace(/'/g, '&#39;') + ')\\'>Rule Stuck</button>' +
-                '<button class="warn" onclick=\\'promptTwoPlayers("crash_two",' + p.id + ',' + JSON.stringify(p.players || []).replace(/'/g, '&#39;') + ')\\'>Crash 2P</button>' +
-              '</div>' : '') + '</div>';
+                (p.status === 'completed'
+                  ? '<button class="warn" onclick="doAction(\\'restart_pod\\',{podId:' + p.id + '})">Restart Pod</button>'
+                  : '<button class="sec" onclick="doAction(\\'crash_replay\\',{podId:' + p.id + '})">Crash Replay</button>' +
+                    '<button class="warn" onclick=\\'promptTwoPlayers("rule_stuck",' + p.id + ',' + JSON.stringify(p.players || []).replace(/'/g, '&#39;') + ')\\'>Rule Stuck</button>' +
+                    '<button class="warn" onclick=\\'promptTwoPlayers("crash_two",' + p.id + ',' + JSON.stringify(p.players || []).replace(/'/g, '&#39;') + ')\\'>Crash 2P</button>') +
+              '</div></div>';
           }).join('') + '</div>') + '</div>';
 
         const standings = g.standings || [];

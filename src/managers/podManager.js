@@ -369,6 +369,98 @@ async function simulatePodMatch(guild, podId) {
   return await finalizePodResults(guild, pod, players, round, tournament);
 }
 
+/**
+ * Overrides placements for any pod (including already-completed pods by rolling back prior scores first).
+ */
+async function overridePodPlacements(guild, podId, ranks) {
+  const pod = await queries.getPodById(podId);
+  if (!pod) throw new Error(`Pod #${podId} not found.`);
+  const players = await queries.getPodPlayers(podId);
+  const round = await queries.getRoundById(pod.round_id);
+  const tournament = await queries.getTournamentById(pod.tournament_id);
+
+  if (!Array.isArray(ranks) || ranks.some(r => !Number.isInteger(r))) {
+    throw new Error('Placements must be whole numbers separated by spaces (e.g. 1 2 3 4 5 6).');
+  }
+  const validation = scoring.validatePlacements(ranks, players.length, { allowTies: true });
+  if (!validation.valid) {
+    throw new Error(validation.error);
+  }
+
+  if (pod.status === 'completed') {
+    await queries.rollbackPodScores(podId, tournament.id, Boolean(round.is_finals));
+    await queries.reopenRound(round.id);
+    if (tournament.status === 'completed') {
+      await queries.updateTournamentStatus(tournament.id, 'in_progress');
+      await queries.updateTournamentStage(tournament.id, round.is_finals ? 'finals' : 'swiss');
+    }
+  }
+
+  for (let i = 0; i < players.length; i++) {
+    players[i].placement = ranks[i];
+    await queries.setPodPlayerPlacement(podId, players[i].user_id, ranks[i], 0);
+  }
+
+  const freshPod = await queries.getPodById(podId);
+  const freshTournament = await queries.getTournamentById(tournament.id);
+  return await finalizePodResults(guild, freshPod, players, round, freshTournament, { allowTies: true });
+}
+
+/**
+ * Restarts a pod (including completed pods: rolls back awarded scores, reopens round, and restores/recreates room).
+ */
+async function restartPod(guild, podId) {
+  const pod = await queries.getPodById(podId);
+  if (!pod) throw new Error(`Pod #${podId} not found.`);
+  const round = await queries.getRoundById(pod.round_id);
+  const tournament = await queries.getTournamentById(pod.tournament_id);
+  const isFinals = Boolean(round.is_finals);
+
+  if (pod.status === 'completed') {
+    await queries.rollbackPodScores(podId, tournament.id, isFinals);
+  } else {
+    await queries.voidPodMatch(podId);
+  }
+
+  await queries.reopenRound(round.id);
+  if (tournament.status === 'completed') {
+    await queries.updateTournamentStatus(tournament.id, 'in_progress');
+    await queries.updateTournamentStage(tournament.id, isFinals ? 'finals' : 'swiss');
+  }
+
+  const refreshedPod = await queries.getPodById(podId);
+  const players = await queries.getPodPlayers(podId);
+
+  if (guild) {
+    let room = refreshedPod.channel_id ? await guild.channels.fetch(refreshedPod.channel_id).catch(() => null) : null;
+    if (room && room.isThread()) {
+      if (room.archived) await room.setArchived(false, 'Pod restarted by coordinator').catch(() => null);
+      if (room.locked) await room.setLocked(false, 'Pod restarted by coordinator').catch(() => null);
+    }
+    if (!room) {
+      room = await channelManager.createPodRoom(guild, tournament, refreshedPod, round.round_number, isFinals, players);
+    }
+
+    const podPayload = embeds.createTournamentPodMessage(
+      refreshedPod,
+      players,
+      round.round_number,
+      isFinals,
+      tournament.finals_round_number
+    );
+    const playerPings = players.map(p => /^\d{17,20}$/.test(p.user_id) ? `<@${p.user_id}>` : `**${p.username}**`).join(' ');
+    const leaderPing = /^\d{17,20}$/.test(refreshedPod.leader_user_id) ? `<@${refreshedPod.leader_user_id}>` : `**${refreshedPod.leader_user_id}**`;
+    const msg = await room.send({
+      content: `🔄 **Pod #${refreshedPod.pod_number} has been restarted by a Coordinator!** ${playerPings}\n👑 ${leaderPing} is the **Lobby Leader**. Please submit a new 4-character lobby code below.`,
+      ...podPayload
+    });
+    await queries.updatePodChannel(podId, room.id, msg.id);
+  }
+
+  webhookService.notifyWebhooks('pod_restarted').catch(() => null);
+  return await queries.getPodById(podId);
+}
+
 module.exports = {
   handlePodSubmitCode,
   handlePodStartMatch,
@@ -377,5 +469,7 @@ module.exports = {
   rulePodStuck,
   voidPodReplay,
   ruleCrashTwoPlayers,
-  simulatePodMatch
+  simulatePodMatch,
+  overridePodPlacements,
+  restartPod
 };

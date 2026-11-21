@@ -956,6 +956,44 @@ async function runTests() {
   await new Promise(resolve => webServer.close(resolve));
   console.log('  ✅ Public webhooks, HMAC signatures, and credentialed admin web server verified.');
 
+  // 15. Override & Restart Completed Pods (Score Rollback Verification)
+  console.log('\n[Test 15] Testing Completed Pod Override & Restart (Score Rollback)...');
+  const rbPodId = webRound.pods[0].podId;
+  await tournamentManager.overridePodPlacements(e2eGuild, rbPodId, [1, 2, 3, 4, 5, 6]);
+  const rbPlayers = await queries.getPodPlayers(rbPodId);
+  assert.strictEqual((await queries.getPodById(rbPodId)).status, 'completed');
+
+  // Override the COMPLETED pod with reversed placements [6, 5, 4, 3, 2, 1]
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'override-pod',
+    optionValues: { pod_id: rbPodId, placements: '6 5 4 3 2 1' }
+  }));
+
+  const pFirstBefore = await queries.getParticipant(webTourneyId, rbPlayers[0].user_id);
+  const pLastNowFirst = await queries.getParticipant(webTourneyId, rbPlayers[5].user_id);
+  assert.strictEqual(pFirstBefore.points, 0, 'Former 1st (now 6th) must have 0 Swiss pts after rollback + override');
+  assert.strictEqual(pFirstBefore.matches_played, 1, 'matches_played must remain 1 (not 2)');
+  assert.strictEqual(pFirstBefore.first_places, 0, 'Former 1st must have 0 first_places after override');
+  assert.strictEqual(pLastNowFirst.points, 6, 'New 1st place must have 6 Swiss pts');
+  assert.strictEqual(pLastNowFirst.carry_over_points, 4, 'New 1st place must have 4 Carry-Over pts');
+  assert.strictEqual(pLastNowFirst.first_places, 1, 'New 1st place must have 1 first_place');
+
+  // Restart the COMPLETED pod via /tournament restart-pod
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: tourneyCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'restart-pod',
+    optionValues: { pod_id: rbPodId }
+  }));
+  const restartedPod = await queries.getPodById(rbPodId);
+  assert.strictEqual(restartedPod.status, 'waiting_code', 'Restarted pod must return to waiting_code');
+  const pReset = await queries.getParticipant(webTourneyId, rbPlayers[5].user_id);
+  assert.strictEqual(pReset.points, 0, 'Points must be rolled back to 0 on pod restart');
+  assert.strictEqual(pReset.carry_over_points, 0, 'Carry-over must be rolled back to 0 on pod restart');
+  assert.strictEqual(pReset.matches_played, 0, 'matches_played must be rolled back to 0 on pod restart');
+  assert.strictEqual(pReset.first_places, 0, 'first_places must be rolled back to 0 on pod restart');
+  console.log('  ✅ Completed pod override & restart score rollback verified.');
+
   console.log('\n======================================================');
   console.log('🎉 ALL TESTS PASSED! FULL CHEKHOV’S GUM FORMAT VERIFIED!');
   console.log('======================================================\n');

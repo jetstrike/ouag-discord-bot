@@ -219,6 +219,10 @@ async function completeRound(roundId) {
   await db.run(`UPDATE tournament_rounds SET status = 'completed' WHERE id = ?`, [roundId]);
 }
 
+async function reopenRound(roundId) {
+  await db.run(`UPDATE tournament_rounds SET status = 'in_progress' WHERE id = ?`, [roundId]);
+}
+
 async function createPod(roundId, tournamentId, podNumber, leaderUserId) {
   const res = await db.run(
     `INSERT INTO tournament_pods (round_id, tournament_id, pod_number, leader_user_id, status) VALUES (?, ?, ?, ?, 'waiting_code')`,
@@ -346,8 +350,41 @@ async function claimPodCompletion(podId) {
 }
 
 async function voidPodMatch(podId) {
-  await db.run(`UPDATE tournament_pods SET status = 'waiting_code', lobby_code = NULL WHERE id = ?`, [podId]);
+  await db.run(`UPDATE tournament_pods SET status = 'waiting_code', lobby_code = NULL, completed_at = NULL WHERE id = ?`, [podId]);
   await db.run(`UPDATE tournament_pod_players SET placement = NULL, points_awarded = 0, carry_over_awarded = 0, finals_points_awarded = 0 WHERE pod_id = ?`, [podId]);
+}
+
+async function rollbackPodScores(podId, tournamentId, isFinals) {
+  const players = await getPodPlayers(podId);
+  for (const pp of players) {
+    if (pp.placement === null) continue;
+    const participant = await getParticipant(tournamentId, pp.user_id);
+    if (!participant) continue;
+
+    const newMatches = Math.max(0, (participant.matches_played || 0) - 1);
+    const newFirsts = Math.max(0, (participant.first_places || 0) - (pp.placement === 1 ? 1 : 0));
+
+    if (isFinals) {
+      const newFinalsPts = Math.max(0, Math.round(((participant.finals_points || 0) - (pp.finals_points_awarded || 0)) * 100) / 100);
+      const isEligible = newFinalsPts >= config.TOURNAMENT_RULES.FINALS_WIN_THRESHOLD ? 1 : 0;
+      await db.run(
+        `UPDATE tournament_participants
+         SET finals_points = ?, is_eligible_to_win = ?, matches_played = ?, first_places = ?
+         WHERE tournament_id = ? AND user_id = ?`,
+        [newFinalsPts, isEligible, newMatches, newFirsts, tournamentId, pp.user_id]
+      );
+    } else {
+      const newSwissPts = Math.max(0, Math.round(((participant.points || 0) - (pp.points_awarded || 0)) * 100) / 100);
+      const newCarryPts = Math.max(0, Math.round(((participant.carry_over_points || 0) - (pp.carry_over_awarded || 0)) * 100) / 100);
+      await db.run(
+        `UPDATE tournament_participants
+         SET points = ?, carry_over_points = ?, matches_played = ?, first_places = ?
+         WHERE tournament_id = ? AND user_id = ?`,
+        [newSwissPts, newCarryPts, newMatches, newFirsts, tournamentId, pp.user_id]
+      );
+    }
+  }
+  await voidPodMatch(podId);
 }
 
 async function recordMatchup(tournamentId, p1, p2, roundNumber) {
@@ -477,6 +514,7 @@ module.exports = {
   getRoundByTournamentAndNumber,
   claimNextRound,
   completeRound,
+  reopenRound,
   createPod,
   updatePodChannel,
   updatePodLeader,
@@ -494,6 +532,7 @@ module.exports = {
   markPodCompleted,
   claimPodCompletion,
   voidPodMatch,
+  rollbackPodScores,
   recordMatchup,
   getMatchupHistory,
   applySwissScores,

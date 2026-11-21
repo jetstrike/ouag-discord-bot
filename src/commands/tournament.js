@@ -87,6 +87,19 @@ const builder = new SlashCommandBuilder()
   )
   .addSubcommand(sub =>
     sub
+      .setName('override-pod')
+      .setDescription('Override placements for any pod (including completed pods; rolls back old scores)')
+      .addIntegerOption(opt => opt.setName('pod_id').setDescription('Pod ID').setRequired(true))
+      .addStringOption(opt => opt.setName('placements').setDescription('Space-separated ranks in pod player order (e.g. 1 2 3 4 5 6)').setRequired(true))
+  )
+  .addSubcommand(sub =>
+    sub
+      .setName('restart-pod')
+      .setDescription('Restart a pod (rolls back scores if completed and reopens its match room)')
+      .addIntegerOption(opt => opt.setName('pod_id').setDescription('Pod ID').setRequired(true))
+  )
+  .addSubcommand(sub =>
+    sub
       .setName('add-player')
       .setDescription('Coordinator manually registers a player')
       .addUserOption(opt => opt.setName('player').setDescription('Player to register').setRequired(true))
@@ -272,7 +285,7 @@ async function handle(interaction, guild) {
     });
   }
 
-  if (sub === 'rule-stuck' || sub === 'crash-replay' || sub === 'crash-two') {
+  if (sub === 'rule-stuck' || sub === 'crash-replay' || sub === 'crash-two' || sub === 'override-pod' || sub === 'restart-pod') {
     if (!requireCoordinator(interaction, member, activeTourney, 'issue match rulings')) return;
     const podId = options.getInteger('pod_id');
     await interaction.deferReply();
@@ -280,6 +293,21 @@ async function handle(interaction, guild) {
     const targetPod = await queries.getPodById(podId);
     if (!targetPod || targetPod.tournament_id !== activeTourney.id) {
       return await interaction.editReply(`❌ Pod #${podId} does not belong to **${activeTourney.name}**.`);
+    }
+
+    if (sub === 'override-pod') {
+      const ranks = options.getString('placements').trim().split(/\s+/).map(Number);
+      try {
+        await tournamentManager.overridePodPlacements(guild, podId, ranks);
+        return await interaction.editReply(`🛠️ **Pod #${podId} Placements Overridden** and standings updated.`);
+      } catch (err) {
+        return await interaction.editReply(`❌ ${err.message}`);
+      }
+    }
+
+    if (sub === 'restart-pod') {
+      await tournamentManager.restartPod(guild, podId);
+      return await interaction.editReply(`🔄 **Pod #${podId} Restarted**: Prior scores rolled back (if any) and match room reopened.`);
     }
 
     if (sub === 'rule-stuck') {
