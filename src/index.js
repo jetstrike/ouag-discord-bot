@@ -4,6 +4,7 @@ const db = require('./database/db');
 const { commands, handleSlashCommand } = require('./commands/slashCommands');
 const { handleCasualButton, handleCasualModal } = require('./interactions/casualHandlers');
 const { handleTournamentButton, handleTournamentModal } = require('./interactions/tournamentHandlers');
+const { startWebServer } = require('./web/server');
 
 // Initialize Discord Client (only Guilds intent needed for Slash Commands, Buttons, and Modals)
 const client = new Client({
@@ -104,6 +105,9 @@ async function start() {
   try {
     // Connect to database
     await db.initDb();
+
+    // Start optional Web Dashboard & Public API server if WEB_PORT is set
+    startWebServer(client);
 
     if (!config.DISCORD_TOKEN) {
       console.log('\n--------------------------------------------------------------');

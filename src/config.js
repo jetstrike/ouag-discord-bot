@@ -6,6 +6,17 @@ module.exports = {
   CLIENT_ID: process.env.CLIENT_ID || '',
   GUILD_ID: process.env.GUILD_ID || '', // Optional: for instant guild slash command registration in development
 
+  // Web Server, Discord OAuth2 & Public Webhooks
+  WEB_PORT: parseInt(process.env.WEB_PORT || '0', 10),
+  DISCORD_CLIENT_SECRET: process.env.DISCORD_CLIENT_SECRET || '',
+  OAUTH_REDIRECT_URI: process.env.OAUTH_REDIRECT_URI || '',
+  SESSION_SECRET: process.env.SESSION_SECRET || '',
+  TOURNAMENT_WEBHOOK_URLS: (process.env.TOURNAMENT_WEBHOOK_URLS || '')
+    .split(',')
+    .map(u => u.trim())
+    .filter(Boolean),
+  TOURNAMENT_WEBHOOK_SECRET: process.env.TOURNAMENT_WEBHOOK_SECRET || '',
+
   // Database Configuration
   // If USE_TIDB is 'true' (or unset with TIDB_HOST provided), connect to TiDB/MySQL via mysql2.
   // Explicit USE_TIDB=false always forces local SQLite even if TIDB_HOST is set.

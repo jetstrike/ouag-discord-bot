@@ -3,6 +3,7 @@ const queries = require('../database/queries');
 const embeds = require('../utils/embeds');
 const tournamentManager = require('../managers/tournamentManager');
 const channelManager = require('../managers/channelManager');
+const webhookService = require('../services/webhookService');
 const config = require('../config');
 
 const builder = new SlashCommandBuilder()
@@ -166,6 +167,7 @@ async function handleCreate(interaction, guild) {
     await fullTourneyChannel.send(regMsg);
   }
 
+  webhookService.notifyWebhooks('tournament_created').catch(() => null);
   return await interaction.editReply({
     content: `✅ Tournament **"${name}"** created following Chekhov's Gum Rules! Registration is live above.`
   });
@@ -341,6 +343,7 @@ async function handle(interaction, guild) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const summary = await channelManager.cleanupTournamentChannels(guild, activeTourney, { deleteCategory: false });
     await queries.cancelTournament(activeTourney.id);
+    webhookService.notifyWebhooks('tournament_cancelled').catch(() => null);
     return await interaction.editReply(
       `🗑️ Tournament **"${activeTourney.name}"** has been cancelled and removed from the active database.\n` +
       `• Cleaned up **${summary.deletedChannels}** channels and **${summary.deletedThreads}** threads.`

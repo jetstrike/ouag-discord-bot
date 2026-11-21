@@ -55,6 +55,13 @@ async function getRecentTournament(guildId) {
   return parseTournamentRow(row);
 }
 
+async function getAllRunningTournaments() {
+  const rows = await db.all(
+    `SELECT * FROM tournaments WHERE status IN ('registration', 'in_progress') ORDER BY id DESC`
+  );
+  return rows.map(parseTournamentRow);
+}
+
 async function updateTournamentStatus(tournamentId, status) {
   await db.run(`UPDATE tournaments SET status = ? WHERE id = ?`, [status, tournamentId]);
 }
@@ -260,6 +267,24 @@ async function getPodsForRound(roundId) {
   return await db.all(`SELECT * FROM tournament_pods WHERE round_id = ? ORDER BY pod_number ASC`, [roundId]);
 }
 
+async function getPodsForTournament(tournamentId) {
+  return await db.all(
+    `SELECT p.*, r.round_number, r.is_finals
+     FROM tournament_pods p
+     JOIN tournament_rounds r ON p.round_id = r.id
+     WHERE p.tournament_id = ?
+     ORDER BY r.id DESC, p.pod_number ASC`,
+    [tournamentId]
+  );
+}
+
+async function getPodPlayersForTournament(tournamentId) {
+  return await db.all(
+    `SELECT * FROM tournament_pod_players WHERE tournament_id = ? ORDER BY pod_id ASC, placement ASC, username ASC`,
+    [tournamentId]
+  );
+}
+
 async function addPodPlayer(podId, tournamentId, userId, username) {
   await db.run(
     `INSERT INTO tournament_pod_players (pod_id, tournament_id, user_id, username) VALUES (?, ?, ?, ?)`,
@@ -433,6 +458,7 @@ module.exports = {
   getTournamentById,
   getActiveTournament,
   getRecentTournament,
+  getAllRunningTournaments,
   updateTournamentStatus,
   updateTournamentStage,
   updateTournamentCurrentRound,
@@ -457,8 +483,10 @@ module.exports = {
   getActivePodForPlayer,
   getPodById,
   getPodsForRound,
+  getPodsForTournament,
   addPodPlayer,
   getPodPlayers,
+  getPodPlayersForTournament,
   updatePodCode,
   markPodStarted,
   markPodStuck,

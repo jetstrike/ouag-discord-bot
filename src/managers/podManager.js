@@ -3,6 +3,7 @@ const queries = require('../database/queries');
 const embeds = require('../utils/embeds');
 const scoring = require('../utils/scoring');
 const channelManager = require('./channelManager');
+const webhookService = require('../services/webhookService');
 const { isCoordinator } = require('../utils/permissions');
 const { handleRoundCompletion } = require('./roundManager');
 const config = require('../config');
@@ -62,6 +63,7 @@ async function handlePodSubmitCode(interaction, podId, code) {
   });
 
   await refreshPodEmbed(interaction.channel, updatedPod, players, round, tournament);
+  webhookService.notifyWebhooks('pod_started').catch(() => null);
 }
 
 /**
@@ -96,6 +98,7 @@ async function handlePodStartMatch(interaction, podId) {
   });
 
   await refreshPodEmbed(interaction.channel, updatedPod, players, round, tournament);
+  webhookService.notifyWebhooks('pod_started').catch(() => null);
 }
 
 /**
@@ -232,6 +235,8 @@ async function finalizePodResults(guild, pod, players, round, tournament, { allo
     await queries.completeRound(round.id);
     await handleRoundCompletion(guild, tournament, round, isFinals, champion);
   }
+
+  webhookService.notifyWebhooks('pod_completed').catch(() => null);
 
   // Clean up pod room upon resolution (lock/archive threads immediately; delete text channels after 10s)
   if (guild && pod.channel_id) {

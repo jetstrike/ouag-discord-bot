@@ -13,6 +13,13 @@ async function getCasualLobbyById(id) {
   return await db.get(`SELECT * FROM casual_lobbies WHERE id = ?`, [id]);
 }
 
+async function getActiveCasualLobbiesForGuild(guildId) {
+  return await db.all(
+    `SELECT * FROM casual_lobbies WHERE guild_id = ? AND status IN ('waiting', 'ready') ORDER BY id DESC`,
+    [guildId]
+  );
+}
+
 async function createCasualLobby(guildId, channelId) {
   const result = await db.run(
     `INSERT INTO casual_lobbies (guild_id, channel_id, status) VALUES (?, ?, 'waiting')`,
@@ -83,6 +90,7 @@ async function claimCasualLobbyStart(lobbyId) {
 module.exports = {
   getActiveCasualLobby,
   getCasualLobbyById,
+  getActiveCasualLobbiesForGuild,
   createCasualLobby,
   updateCasualLobbyMessage,
   addCasualPlayer,

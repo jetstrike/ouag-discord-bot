@@ -855,6 +855,107 @@ async function runTests() {
   assert.strictEqual((await queries.getPodById(finalsPodObj.id)).status, 'completed', 'rulePodStuck must overwrite stale placements and complete cleanly');
   console.log('  ✅ Concurrency, ruling guards, tie validation, and thread auto-cleanup verified.');
 
+  // 14. Public Webhook Snapshots, HMAC Signing & Credentialed Admin Web Server
+  console.log('\n[Test 14] Testing Public Webhooks, Payload Sanitization & Admin Web Server...');
+  const http = require('node:http');
+  const webhookService = require('../src/services/webhookService');
+  const { createWebServer, signToken } = require('../src/web/server');
+
+  // Ensure a running tournament exists in DB for snapshot & web tests
+  const webTourneyId = await queries.createTournament({
+    guildId: e2eGuild.id,
+    name: 'Web API Tourney',
+    channelMode: 'category',
+    tournamentChannelId: tourneyCh.id,
+    resultsChannelId: resultsCh.id,
+    createdBy: adminUser.id
+  });
+  for (let i = 0; i < 6; i++) {
+    await queries.registerParticipant(webTourneyId, `50000000000000000${i}`, `WebPlayer${i}`);
+  }
+  const webRound = await tournamentManager.startRound(e2eGuild, webTourneyId);
+  await queries.updatePodCode(webRound.pods[0].podId, 'Z9X8');
+
+  // 14a. Public snapshot omits user_id and lobby_code
+  const pubSnap = await webhookService.buildPublicTournamentSnapshot();
+  const pubTourney = pubSnap.tournaments.find(t => t.id === webTourneyId);
+  assert(pubTourney, 'Public snapshot must include running tournament');
+  assert.strictEqual(pubTourney.standings[0].user_id, undefined, 'Public standings must omit user_id');
+  assert.strictEqual(pubTourney.pods[0].lobby_code, undefined, 'Public pods must omit private lobby_code');
+  assert.strictEqual(pubTourney.pods[0].players[0].user_id, undefined, 'Public pod players must omit user_id');
+
+  // 14b. Webhook delivery & HMAC signature
+  let receivedWebhook = null;
+  let receivedSig = null;
+  const hookServer = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', c => { raw += c; });
+    req.on('end', () => {
+      receivedWebhook = JSON.parse(raw);
+      receivedSig = req.headers['x-ouag-signature'];
+      res.writeHead(200);
+      res.end('ok');
+    });
+  });
+  await new Promise(resolve => hookServer.listen(0, '127.0.0.1', resolve));
+  const hookPort = hookServer.address().port;
+
+  config.TOURNAMENT_WEBHOOK_URLS = [`http://127.0.0.1:${hookPort}/hook`];
+  config.TOURNAMENT_WEBHOOK_SECRET = 'test_webhook_secret';
+  await webhookService.notifyWebhooks('test_event');
+  await new Promise(resolve => hookServer.close(resolve));
+
+  assert(receivedWebhook && receivedWebhook.event === 'test_event', 'Webhook must deliver event payload');
+  assert.strictEqual(
+    receivedSig,
+    webhookService.signPayload(JSON.stringify(receivedWebhook), 'test_webhook_secret'),
+    'Webhook HMAC signature must match'
+  );
+  config.TOURNAMENT_WEBHOOK_URLS = [];
+  config.TOURNAMENT_WEBHOOK_SECRET = '';
+
+  // 14c. Web server public endpoint + OAuth session + admin authorization
+  config.SESSION_SECRET = 'test_session_secret';
+  e2eGuild.members = { fetch: async () => null };
+  const mockWebClient = {
+    guilds: { cache: new Map([[e2eGuild.id, e2eGuild]]) }
+  };
+  const webServer = createWebServer(mockWebClient);
+  await new Promise(resolve => webServer.listen(0, '127.0.0.1', resolve));
+  const webPort = webServer.address().port;
+
+  const pubRes = await fetch(`http://127.0.0.1:${webPort}/api/public/tournaments`);
+  assert.strictEqual(pubRes.status, 200);
+  const pubBody = await pubRes.json();
+  assert(pubBody.tournaments.some(t => t.id === webTourneyId));
+
+  const unauthAdmin = await fetch(`http://127.0.0.1:${webPort}/api/admin/overview`);
+  assert.strictEqual(unauthAdmin.status, 401, 'Admin overview must reject unauthenticated requests');
+
+  const ownerCookie = `ouag_session=${encodeURIComponent(signToken({
+    userId: e2eGuild.ownerId,
+    username: 'AdminHost',
+    exp: Date.now() + 60000
+  }, 'test_session_secret'))}`;
+
+  const authAdmin = await fetch(`http://127.0.0.1:${webPort}/api/admin/overview`, {
+    headers: { Cookie: ownerCookie }
+  });
+  assert.strictEqual(authAdmin.status, 200);
+  const authBody = await authAdmin.json();
+  assert.strictEqual(authBody.guilds[0].pods[0].lobby_code, 'Z9X8', 'Admin view must include private lobby_code');
+
+  const dropRes = await fetch(`http://127.0.0.1:${webPort}/api/admin/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: ownerCookie },
+    body: JSON.stringify({ guildId: e2eGuild.id, action: 'drop_player', userId: '500000000000000000' })
+  });
+  assert.strictEqual(dropRes.status, 200);
+  assert.strictEqual((await queries.getParticipant(webTourneyId, '500000000000000000')).status, 'dropped');
+
+  await new Promise(resolve => webServer.close(resolve));
+  console.log('  ✅ Public webhooks, HMAC signatures, and credentialed admin web server verified.');
+
   console.log('\n======================================================');
   console.log('🎉 ALL TESTS PASSED! FULL CHEKHOV’S GUM FORMAT VERIFIED!');
   console.log('======================================================\n');

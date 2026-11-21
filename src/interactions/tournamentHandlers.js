@@ -14,6 +14,7 @@ const embeds = require('../utils/embeds');
 const scoring = require('../utils/scoring');
 const tournamentManager = require('../managers/tournamentManager');
 const channelManager = require('../managers/channelManager');
+const webhookService = require('../services/webhookService');
 
 /**
  * Announces a player drop inside their pod room and reassigns Lobby Leader if needed.
@@ -62,6 +63,7 @@ async function handleTournamentButton(interaction) {
       await interaction.message.edit(regMsg);
     } catch (e) {}
 
+    webhookService.notifyWebhooks('player_registered').catch(() => null);
     return interaction.editReply({
       content: `🎉 You have successfully registered for **${tournament.name}**! Total players: **${participants.length}**.`
     });
@@ -293,6 +295,7 @@ async function handleTournamentButton(interaction) {
       }
     }
 
+    webhookService.notifyWebhooks('player_dropped').catch(() => null);
     return interaction.editReply({
       content: `🚪 You have successfully dropped from **${tournament.name}**. Thank you for playing!`,
       components: []

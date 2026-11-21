@@ -2,6 +2,7 @@ const queries = require('../database/queries');
 const embeds = require('../utils/embeds');
 const swissPairing = require('./swissPairing');
 const channelManager = require('./channelManager');
+const webhookService = require('../services/webhookService');
 const config = require('../config');
 
 /**
@@ -80,6 +81,7 @@ async function startRound(guild, tournamentId) {
     createdPods.push({ podId, roomName: room.name, podNumber, size: podPlayers.length });
   }
 
+  webhookService.notifyWebhooks('round_started').catch(() => null);
   return { roundNumber: nextRoundNumber, isFinals: false, pods: createdPods };
 }
 
@@ -134,6 +136,7 @@ async function startFinalsRound(guild, tournamentId) {
   });
 
   await queries.updatePodChannel(podId, room.id, podMsg.id);
+  webhookService.notifyWebhooks('finals_round_started').catch(() => null);
   return { finalsRoundNumber, podId, roomName: room.name };
 }
 
