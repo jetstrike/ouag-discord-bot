@@ -396,15 +396,25 @@ async function cleanupTournamentChannels(guild, tournament, options = {}) {
     }
   } catch (err) {}
 
-  // 3. If tournament has a category, clean up all remaining channels inside it
+  // 3. If tournament has a category, only clean up orphaned channels explicitly created for THIS tournament
   if (tournament.category_id) {
     try {
       const category = await guild.channels.fetch(tournament.category_id).catch(() => null);
       if (category) {
         const allChannels = await guild.channels.fetch().catch(() => guild.channels.cache);
         const children = allChannels.filter(c => c && c.parentId === category.id);
+        const podTopicPrefix = `OUAG Tournament ${tournament.name} |`;
+        const issueTopicSuffix = ` for ${tournament.name}`;
+
         for (const [cId, child] of children) {
           if (deletedIds.has(cId)) continue;
+          if (cId === tournament.tournament_channel_id || cId === tournament.results_channel_id) continue;
+
+          const topic = child.topic || '';
+          const isThisTournamentPod = topic.startsWith(podTopicPrefix);
+          const isThisTournamentIssue = child.name?.startsWith('issue-') && topic.endsWith(issueTopicSuffix);
+          if (!isThisTournamentPod && !isThisTournamentIssue) continue;
+
           try {
             await child.delete('Tournament cleanup');
             result.deletedChannels++;

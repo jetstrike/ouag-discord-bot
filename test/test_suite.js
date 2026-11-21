@@ -391,6 +391,35 @@ async function runTests() {
   assert.strictEqual(cleanupRes.deletedChannels, 1, 'Should delete recorded issue channel');
   assert(deletedTracker.includes('ch_issue_2'), 'Should have deleted ch_issue_2');
 
+  // Verify cleanup NEVER deletes non-tournament channels in the same category
+  const catDeleted = [];
+  const catId = 'cat_shared_1';
+  const catChildren = new Map([
+    ['ch_general', { id: 'ch_general', name: 'general', parentId: catId, topic: 'General chat', delete: async () => catDeleted.push('ch_general') }],
+    ['ch_results', { id: 'ch_results', name: 'results', parentId: catId, topic: 'OUAG Tournament Cleanup Test | results', delete: async () => catDeleted.push('ch_results') }],
+    ['ch_orphan_pod', { id: 'ch_orphan_pod', name: 'pod-1-r1', parentId: catId, topic: 'OUAG Tournament Cleanup Test | Round 1 Pod #1', delete: async () => catDeleted.push('ch_orphan_pod') }],
+    ['ch_other_tourney', { id: 'ch_other_tourney', name: 'pod-1-r1', parentId: catId, topic: 'OUAG Tournament Other Event | Round 1 Pod #1', delete: async () => catDeleted.push('ch_other_tourney') }]
+  ]);
+  catChildren.filter = (fn) => {
+    const m = new Map();
+    for (const [k, v] of catChildren.entries()) if (fn(v, k)) m.set(k, v);
+    return m;
+  };
+  const sharedCatGuild = {
+    channels: {
+      cache: catChildren,
+      fetch: async (id) => (id ? (id === catId ? { id: catId, delete: async () => {} } : catChildren.get(id) || null) : catChildren)
+    }
+  };
+  await channelManager.cleanupTournamentChannels(sharedCatGuild, {
+    id: 99999,
+    name: 'Cleanup Test',
+    category_id: catId,
+    tournament_channel_id: 'ch_general',
+    results_channel_id: 'ch_results'
+  });
+  assert.deepStrictEqual(catDeleted, ['ch_orphan_pod'], 'Cleanup must only delete orphaned channels belonging to THIS tournament');
+
   // Cancel tournament cleans up DB records
   await queries.cancelTournament(tId);
   issues = await queries.getIssueChannels(tId);
