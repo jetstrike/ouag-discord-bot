@@ -1067,6 +1067,12 @@ async function runTests() {
   }));
   const restartedPod = await queries.getPodById(rbPodId);
   assert.strictEqual(restartedPod.status, 'waiting_code', 'Restarted pod must return to waiting_code');
+  assert(await e2eGuild.channels.fetch(restartedPod.channel_id), 'Restarted pod channel must remain open');
+  await assert.rejects(
+    () => tournamentManager.startRound(e2eGuild, rbTourneyId),
+    /incomplete pod/i,
+    'Cannot advance to Round 2 after restarting a Round 1 pod'
+  );
   const pReset = await queries.getParticipant(rbTourneyId, rbPlayers[5].user_id);
   assert.strictEqual(pReset.points, 0, 'Points must be rolled back to 0 on pod restart');
   assert.strictEqual(pReset.carry_over_points, 0, 'Carry-over must be rolled back to 0 on pod restart');

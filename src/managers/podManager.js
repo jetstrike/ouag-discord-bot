@@ -8,6 +8,16 @@ const { isCoordinator } = require('../utils/permissions');
 const { handleRoundCompletion } = require('./roundManager');
 const config = require('../config');
 
+const pendingCleanupTimers = new Map();
+
+function clearPodCleanupTimer(podId) {
+  const timer = pendingCleanupTimers.get(podId);
+  if (timer) {
+    clearTimeout(timer);
+    pendingCleanupTimers.delete(podId);
+  }
+}
+
 /**
  * Refreshes the pod's status embed in its match channel.
  */
@@ -243,10 +253,18 @@ async function finalizePodResults(guild, pod, players, round, tournament, { allo
     if (tournament.channel_mode === 'thread') {
       await channelManager.cleanupPodRoom(guild, pod.channel_id, tournament.channel_mode);
     } else {
-      const timer = setTimeout(() => {
-        channelManager.cleanupPodRoom(guild, pod.channel_id, tournament.channel_mode).catch(() => null);
+      clearPodCleanupTimer(pod.id);
+      const scheduledChannelId = pod.channel_id;
+      const timer = setTimeout(async () => {
+        pendingCleanupTimers.delete(pod.id);
+        const latestPod = await queries.getPodById(pod.id).catch(() => null);
+        if (!latestPod || latestPod.status !== 'completed' || latestPod.channel_id !== scheduledChannelId) {
+          return;
+        }
+        await channelManager.cleanupPodRoom(guild, scheduledChannelId, tournament.channel_mode).catch(() => null);
       }, 10000);
       if (typeof timer.unref === 'function') timer.unref();
+      pendingCleanupTimers.set(pod.id, timer);
     }
   }
 }
@@ -298,6 +316,7 @@ async function rulePodStuck(guild, podId, remainingPlayerIds) {
  * Rule F.2: Voids a crashed lobby and prepares it for replay (if >= 3 players remaining).
  */
 async function voidPodReplay(guild, podId) {
+  clearPodCleanupTimer(podId);
   const pod = await queries.getPodById(podId);
   if (!pod) throw new Error(`Pod #${podId} not found.`);
   if (pod.status === 'completed') throw new Error(`Pod #${podId} is already completed.`);
@@ -410,6 +429,7 @@ async function overridePodPlacements(guild, podId, ranks) {
  * Restarts a pod (including completed pods: rolls back awarded scores, reopens round, and restores/recreates room).
  */
 async function restartPod(guild, podId) {
+  clearPodCleanupTimer(podId);
   const pod = await queries.getPodById(podId);
   if (!pod) throw new Error(`Pod #${podId} not found.`);
   const round = await queries.getRoundById(pod.round_id);
