@@ -70,16 +70,6 @@ async function updateTournamentStage(tournamentId, stage) {
   await db.run(`UPDATE tournaments SET stage = ? WHERE id = ?`, [stage, tournamentId]);
 }
 
-async function updateTournamentCurrentRound(tournamentId, roundNum) {
-  await db.run(`UPDATE tournaments SET current_round = ? WHERE id = ?`, [roundNum, tournamentId]);
-}
-
-async function incrementFinalsRound(tournamentId) {
-  await db.run(`UPDATE tournaments SET finals_round_number = finals_round_number + 1 WHERE id = ?`, [tournamentId]);
-  const row = await db.get(`SELECT finals_round_number FROM tournaments WHERE id = ?`, [tournamentId]);
-  return row ? row.finals_round_number : 1;
-}
-
 async function claimNextFinalsRound(tournamentId, expectedFinalsRound, nextFinalsRound) {
   const res = await db.run(
     `UPDATE tournaments SET finals_round_number = ?, status = 'in_progress', stage = 'finals' 
@@ -87,13 +77,6 @@ async function claimNextFinalsRound(tournamentId, expectedFinalsRound, nextFinal
     [nextFinalsRound, tournamentId, expectedFinalsRound]
   );
   return res.changes > 0;
-}
-
-async function updateTournamentPoints(tournamentId, pointsArray) {
-  await db.run(
-    `UPDATE tournaments SET points_config = ? WHERE id = ?`,
-    [JSON.stringify(pointsArray), tournamentId]
-  );
 }
 
 async function registerParticipant(tournamentId, userId, username) {
@@ -216,11 +199,34 @@ async function claimNextRound(tournamentId, expectedCurrentRound, nextRoundNumbe
 }
 
 async function completeRound(roundId) {
-  await db.run(`UPDATE tournament_rounds SET status = 'completed' WHERE id = ?`, [roundId]);
+  const res = await db.run(`UPDATE tournament_rounds SET status = 'completed' WHERE id = ? AND status != 'completed'`, [roundId]);
+  return res.changes > 0;
 }
 
 async function reopenRound(roundId) {
   await db.run(`UPDATE tournament_rounds SET status = 'in_progress' WHERE id = ?`, [roundId]);
+}
+
+async function rollbackFailedRound(roundId, tournamentId, prevRoundNum, prevStage, prevStatus, isFinals) {
+  if (roundId) {
+    const pods = await getPodsForRound(roundId);
+    for (const p of pods) {
+      await db.run(`DELETE FROM tournament_pod_players WHERE pod_id = ?`, [p.id]);
+    }
+    await db.run(`DELETE FROM tournament_pods WHERE round_id = ?`, [roundId]);
+    await db.run(`DELETE FROM tournament_rounds WHERE id = ?`, [roundId]);
+  }
+  if (isFinals) {
+    await db.run(
+      `UPDATE tournaments SET finals_round_number = ?, stage = ?, status = ? WHERE id = ?`,
+      [prevRoundNum, prevStage, prevStatus, tournamentId]
+    );
+  } else {
+    await db.run(
+      `UPDATE tournaments SET current_round = ?, stage = ?, status = ? WHERE id = ?`,
+      [prevRoundNum, prevStage, prevStatus, tournamentId]
+    );
+  }
 }
 
 async function createPod(roundId, tournamentId, podNumber, leaderUserId) {
@@ -331,13 +337,6 @@ async function setPodPlayerPlacement(podId, userId, placement, swissPts = 0, car
      SET placement = ?, points_awarded = ?, carry_over_awarded = ?, finals_points_awarded = ?, reported_at = CURRENT_TIMESTAMP 
      WHERE pod_id = ? AND user_id = ?`,
     [placement, swissPts, carryOverPts, finalsPts, podId, userId]
-  );
-}
-
-async function markPodCompleted(podId) {
-  await db.run(
-    `UPDATE tournament_pods SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?`,
-    [podId]
   );
 }
 
@@ -498,10 +497,7 @@ module.exports = {
   getAllRunningTournaments,
   updateTournamentStatus,
   updateTournamentStage,
-  updateTournamentCurrentRound,
-  incrementFinalsRound,
   claimNextFinalsRound,
-  updateTournamentPoints,
   registerParticipant,
   unregisterParticipant,
   getParticipants,
@@ -515,6 +511,7 @@ module.exports = {
   claimNextRound,
   completeRound,
   reopenRound,
+  rollbackFailedRound,
   createPod,
   updatePodChannel,
   updatePodLeader,
@@ -529,7 +526,6 @@ module.exports = {
   markPodStarted,
   markPodStuck,
   setPodPlayerPlacement,
-  markPodCompleted,
   claimPodCompletion,
   voidPodMatch,
   rollbackPodScores,

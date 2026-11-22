@@ -68,15 +68,6 @@ async function setCasualLobbyCode(lobbyId, code, userId) {
   );
 }
 
-async function markCasualLobbyStarted(lobbyId) {
-  await db.run(
-    `UPDATE casual_lobbies 
-     SET status = 'started', started_at = CURRENT_TIMESTAMP 
-     WHERE id = ?`,
-    [lobbyId]
-  );
-}
-
 async function claimCasualLobbyStart(lobbyId) {
   const res = await db.run(
     `UPDATE casual_lobbies 
@@ -97,6 +88,5 @@ module.exports = {
   removeCasualPlayer,
   getCasualPlayers,
   setCasualLobbyCode,
-  markCasualLobbyStarted,
   claimCasualLobbyStart
 };

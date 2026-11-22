@@ -2,7 +2,6 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const { URL } = require('node:url');
 const queries = require('../database/queries');
-const scoring = require('../utils/scoring');
 const roundManager = require('../managers/roundManager');
 const podManager = require('../managers/podManager');
 const channelManager = require('../managers/channelManager');
@@ -14,6 +13,8 @@ const config = require('../config');
 const SESSION_COOKIE = 'ouag_session';
 const STATE_COOKIE = 'ouag_oauth_state';
 const MAX_BODY_BYTES = 64 * 1024;
+const memberCache = new Map();
+const MEMBER_CACHE_TTL_MS = 60 * 1000;
 
 function signToken(payloadObj, secret) {
   const data = Buffer.from(JSON.stringify(payloadObj)).toString('base64url');
@@ -79,6 +80,19 @@ function readJsonBody(req) {
   });
 }
 
+async function getGuildMemberCached(guild, userId) {
+  const cachedInDjs = guild.members?.cache?.get(userId);
+  if (cachedInDjs) return cachedInDjs;
+
+  const key = `${guild.id}:${userId}`;
+  const entry = memberCache.get(key);
+  if (entry && Date.now() < entry.exp) return entry.member;
+
+  const member = await guild.members.fetch(userId).catch(() => null);
+  memberCache.set(key, { member, exp: Date.now() + MEMBER_CACHE_TTL_MS });
+  return member;
+}
+
 async function getAuthorizedGuilds(client, userId) {
   const authorized = [];
   if (!client?.guilds?.cache) return authorized;
@@ -90,7 +104,7 @@ async function getAuthorizedGuilds(client, userId) {
       authorized.push({ guild, tourney });
       continue;
     }
-    const member = await guild.members.fetch(userId).catch(() => null);
+    const member = await getGuildMemberCached(guild, userId);
     if (member && isCoordinator(member, tourney)) {
       authorized.push({ guild, tourney });
     }
@@ -258,6 +272,17 @@ function createWebServer(client) {
       }
 
       if (req.method === 'POST' && path === '/api/admin/action') {
+        const contentType = String(req.headers['content-type'] || '').toLowerCase();
+        if (!contentType.includes('application/json')) {
+          return sendJson(res, 415, { error: 'Content-Type must be application/json.' });
+        }
+        if (req.headers.origin) {
+          let originHost = '';
+          try { originHost = new URL(req.headers.origin).host; } catch (e) {}
+          if (originHost !== req.headers.host) {
+            return sendJson(res, 403, { error: 'Cross-origin request rejected.' });
+          }
+        }
         const body = await readJsonBody(req);
         const target = authorizedGuilds.find(g => g.guild.id === body.guildId);
         if (!target) {
@@ -290,8 +315,7 @@ function createWebServer(client) {
           });
         }
         if (action === 'drop_player') {
-          await queries.unregisterParticipant(tourney.id, String(body.userId || ''));
-          webhookService.notifyWebhooks('player_dropped').catch(() => null);
+          await podManager.handlePlayerDrop(guild, tourney, String(body.userId || ''));
           return sendJson(res, 200, { message: 'Player dropped from tournament.' });
         }
 

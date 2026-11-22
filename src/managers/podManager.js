@@ -232,8 +232,10 @@ async function finalizePodResults(guild, pod, players, round, tournament, { allo
 
   const allPodsInRound = await queries.getPodsForRound(round.id);
   if (allPodsInRound.every(p => p.status === 'completed')) {
-    await queries.completeRound(round.id);
-    await handleRoundCompletion(guild, tournament, round, isFinals, champion);
+    const roundClaimed = await queries.completeRound(round.id);
+    if (roundClaimed) {
+      await handleRoundCompletion(guild, tournament, round, isFinals, champion);
+    }
   }
 
   webhookService.notifyWebhooks('pod_completed').catch(() => null);
@@ -449,6 +451,64 @@ async function restartPod(guild, podId) {
   return await queries.getPodById(podId);
 }
 
+/**
+ * Drops a player from a tournament, reassigns Lobby Leader if needed, and auto-assigns last place in their active pod.
+ */
+async function handlePlayerDrop(guild, tournament, userId, podId = 0) {
+  await queries.unregisterParticipant(tournament.id, userId);
+
+  let pod = podId > 0 ? await queries.getPodById(podId) : null;
+  if (!pod) {
+    const isFinals = tournament.stage === 'finals';
+    const targetRoundNum = isFinals ? tournament.finals_round_number : tournament.current_round;
+    if (targetRoundNum > 0) {
+      pod = await queries.getActivePodForPlayer(tournament.id, targetRoundNum, userId, isFinals);
+    }
+  }
+
+  if (pod && pod.status !== 'completed') {
+    const podPlayers = await queries.getPodPlayers(pod.id);
+    const inPod = podPlayers.find(p => p.user_id === userId);
+    const podRoom = guild && pod.channel_id ? await guild.channels.fetch(pod.channel_id).catch(() => null) : null;
+
+    if (podRoom) {
+      await podRoom.send({ content: `🚪 <@${userId}> has dropped from the tournament.` }).catch(() => null);
+    }
+
+    if (pod.leader_user_id === userId) {
+      const activeSet = new Set((await queries.getParticipants(pod.tournament_id, true)).map(p => p.user_id));
+      const remaining = podPlayers.filter(p => p.user_id !== userId && activeSet.has(p.user_id));
+      if (remaining.length > 0) {
+        await queries.updatePodLeader(pod.id, remaining[0].user_id);
+        if (podRoom) {
+          await podRoom.send({
+            content: `👑 <@${remaining[0].user_id}> is now the new **Lobby Leader** for this match.`
+          }).catch(() => null);
+        }
+      }
+    }
+
+    if (inPod && inPod.placement === null) {
+      const lastPlace = podPlayers.length;
+      await queries.setPodPlayerPlacement(pod.id, userId, lastPlace, 0, 0, 0);
+      const updatedPlayers = await queries.getPodPlayers(pod.id);
+      const refreshedPod = await queries.getPodById(pod.id);
+      const round = await queries.getRoundById(pod.round_id);
+
+      if (podRoom) {
+        await refreshPodEmbed(podRoom, refreshedPod, updatedPlayers, round, tournament);
+        await podRoom.send({ content: `📉 <@${userId}> was assigned last place (Rank ${lastPlace}) due to dropping.` }).catch(() => null);
+      }
+
+      if (refreshedPod.status === 'started' && updatedPlayers.every(p => p.placement !== null) && guild) {
+        await finalizePodResults(guild, refreshedPod, updatedPlayers, round, tournament, { allowTies: false });
+      }
+    }
+  }
+
+  webhookService.notifyWebhooks('player_dropped').catch(() => null);
+}
+
 module.exports = {
   handlePodSubmitCode,
   handlePodStartMatch,
@@ -459,5 +519,6 @@ module.exports = {
   ruleCrashTwoPlayers,
   simulatePodMatch,
   overridePodPlacements,
-  restartPod
+  restartPod,
+  handlePlayerDrop
 };

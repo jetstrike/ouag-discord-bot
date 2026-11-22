@@ -11,36 +11,9 @@ const {
 
 const queries = require('../database/queries');
 const embeds = require('../utils/embeds');
-const scoring = require('../utils/scoring');
 const tournamentManager = require('../managers/tournamentManager');
 const channelManager = require('../managers/channelManager');
 const webhookService = require('../services/webhookService');
-
-/**
- * Announces a player drop inside their pod room and reassigns Lobby Leader if needed.
- */
-async function notifyPodOfDrop(guild, pod, userId) {
-  if (!guild || !pod || !pod.channel_id) return;
-  const podRoom = await guild.channels.fetch(pod.channel_id).catch(() => null);
-  if (!podRoom) return;
-
-  await podRoom.send({
-    content: `🚪 <@${userId}> has dropped from the tournament.`
-  }).catch(() => null);
-
-  if (pod.leader_user_id === userId) {
-    const podPlayers = await queries.getPodPlayers(pod.id);
-    const activeSet = new Set((await queries.getParticipants(pod.tournament_id, true)).map(p => p.user_id));
-    const remaining = podPlayers.filter(p => p.user_id !== userId && activeSet.has(p.user_id));
-    if (remaining.length > 0) {
-      const newLeader = remaining[0];
-      await queries.updatePodLeader(pod.id, newLeader.user_id);
-      await podRoom.send({
-        content: `👑 <@${newLeader.user_id}> is now the new **Lobby Leader** for this match.`
-      }).catch(() => null);
-    }
-  }
-}
 
 async function handleTournamentButton(interaction) {
   const customId = interaction.customId;
@@ -278,24 +251,9 @@ async function handleTournamentButton(interaction) {
     const tournament = await queries.getTournamentById(tournamentId);
     if (!tournament) return interaction.editReply({ content: 'Tournament not found.', components: [] });
 
-    await queries.unregisterParticipant(tournamentId, interaction.user.id);
-
     const targetGuild = interaction.guild || (interaction.guildId ? await interaction.client.guilds.fetch(interaction.guildId).catch(() => null) : null);
+    await tournamentManager.handlePlayerDrop(targetGuild, tournament, interaction.user.id, podId);
 
-    // Notify pod room and reassign leader if needed
-    if (podId > 0) {
-      const pod = await queries.getPodById(podId);
-      await notifyPodOfDrop(targetGuild, pod, interaction.user.id);
-    } else {
-      const isFinals = tournament.stage === 'finals';
-      const targetRoundNum = isFinals ? tournament.finals_round_number : tournament.current_round;
-      if (targetRoundNum > 0) {
-        const activePod = await queries.getActivePodForPlayer(tournamentId, targetRoundNum, interaction.user.id, isFinals);
-        await notifyPodOfDrop(targetGuild, activePod, interaction.user.id);
-      }
-    }
-
-    webhookService.notifyWebhooks('player_dropped').catch(() => null);
     return interaction.editReply({
       content: `🚪 You have successfully dropped from **${tournament.name}**. Thank you for playing!`,
       components: []

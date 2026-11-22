@@ -56,47 +56,53 @@ async function startRound(guild, tournamentId) {
     throw new Error(`Swiss Round ${nextRoundNumber} is already being started by another coordinator.`);
   }
 
-  if (prevRound) {
-    await cleanupRoundPodRooms(guild, tournament, prevRound.id);
+  let roundId = null;
+  const createdPods = [];
+  try {
+    roundId = await queries.createRound(tournamentId, nextRoundNumber, 0);
+
+    const matchupHistory = await queries.getMatchupHistory(tournamentId);
+    const podGroups = swissPairing.generatePods(participants, nextRoundNumber, false, matchupHistory);
+
+    for (let podIndex = 0; podIndex < podGroups.length; podIndex++) {
+      const podPlayers = podGroups[podIndex];
+      const podNumber = podIndex + 1;
+      const leader = podPlayers[Math.floor(Math.random() * podPlayers.length)];
+
+      const podId = await queries.createPod(roundId, tournamentId, podNumber, leader.user_id);
+
+      for (const p of podPlayers) {
+        await queries.addPodPlayer(podId, tournamentId, p.user_id, p.username);
+      }
+
+      for (let i = 0; i < podPlayers.length; i++) {
+        for (let j = i + 1; j < podPlayers.length; j++) {
+          await queries.recordMatchup(tournamentId, podPlayers[i].user_id, podPlayers[j].user_id, nextRoundNumber);
+        }
+      }
+
+      const podData = await queries.getPodById(podId);
+      const room = await channelManager.createPodRoom(guild, tournament, podData, nextRoundNumber, false, podPlayers);
+
+      const podMessagePayload = embeds.createTournamentPodMessage(podData, podPlayers, nextRoundNumber, false);
+      const playerPings = podPlayers.map(p => /^\d{17,20}$/.test(p.user_id) ? `<@${p.user_id}>` : `**${p.username}**`).join(' ');
+      const leaderPing = /^\d{17,20}$/.test(leader.user_id) ? `<@${leader.user_id}>` : `**${leader.username}**`;
+
+      const podMsg = await room.send({
+        content: `👋 Welcome to your match room! ${playerPings}\n👑 ${leaderPing} is the **Lobby Leader**. Please create the in-game OUAG lobby and submit the 4-character code below.`,
+        ...podMessagePayload
+      });
+
+      await queries.updatePodChannel(podId, room.id, podMsg.id);
+      createdPods.push({ podId, roomName: room.name, podNumber, size: podPlayers.length });
+    }
+  } catch (err) {
+    await queries.rollbackFailedRound(roundId, tournamentId, tournament.current_round, tournament.stage, tournament.status, false);
+    throw err;
   }
 
-  const roundId = await queries.createRound(tournamentId, nextRoundNumber, 0);
-
-  const matchupHistory = await queries.getMatchupHistory(tournamentId);
-  const podGroups = swissPairing.generatePods(participants, nextRoundNumber, false, matchupHistory);
-  const createdPods = [];
-
-  for (let podIndex = 0; podIndex < podGroups.length; podIndex++) {
-    const podPlayers = podGroups[podIndex];
-    const podNumber = podIndex + 1;
-    const leader = podPlayers[Math.floor(Math.random() * podPlayers.length)];
-
-    const podId = await queries.createPod(roundId, tournamentId, podNumber, leader.user_id);
-
-    for (const p of podPlayers) {
-      await queries.addPodPlayer(podId, tournamentId, p.user_id, p.username);
-    }
-
-    for (let i = 0; i < podPlayers.length; i++) {
-      for (let j = i + 1; j < podPlayers.length; j++) {
-        await queries.recordMatchup(tournamentId, podPlayers[i].user_id, podPlayers[j].user_id, nextRoundNumber);
-      }
-    }
-
-    const podData = await queries.getPodById(podId);
-    const room = await channelManager.createPodRoom(guild, tournament, podData, nextRoundNumber, false, podPlayers);
-
-    const podMessagePayload = embeds.createTournamentPodMessage(podData, podPlayers, nextRoundNumber, false);
-    const playerPings = podPlayers.map(p => /^\d{17,20}$/.test(p.user_id) ? `<@${p.user_id}>` : `**${p.username}**`).join(' ');
-    const leaderPing = /^\d{17,20}$/.test(leader.user_id) ? `<@${leader.user_id}>` : `**${leader.username}**`;
-
-    const podMsg = await room.send({
-      content: `👋 Welcome to your match room! ${playerPings}\n👑 ${leaderPing} is the **Lobby Leader**. Please create the in-game OUAG lobby and submit the 4-character code below.`,
-      ...podMessagePayload
-    });
-
-    await queries.updatePodChannel(podId, room.id, podMsg.id);
-    createdPods.push({ podId, roomName: room.name, podNumber, size: podPlayers.length });
+  if (prevRound) {
+    await cleanupRoundPodRooms(guild, tournament, prevRound.id);
   }
 
   webhookService.notifyWebhooks('round_started').catch(() => null);
@@ -135,35 +141,45 @@ async function startFinalsRound(guild, tournamentId) {
     throw new Error(`Finals Lobby #${nextFinalsRound} is already being started by another coordinator.`);
   }
   const finalsRoundNumber = nextFinalsRound;
+  let roundId = null;
+  let podId = null;
+  let roomName = null;
+
+  try {
+    roundId = await queries.createRound(tournamentId, finalsRoundNumber, 1);
+    const leader = finalists[0];
+    podId = await queries.createPod(roundId, tournamentId, 1, leader.user_id);
+
+    for (const f of finalists) {
+      await queries.addPodPlayer(podId, tournamentId, f.user_id, f.username);
+    }
+
+    const podData = await queries.getPodById(podId);
+    const room = await channelManager.createPodRoom(guild, tournament, podData, finalsRoundNumber, true, finalists);
+    roomName = room.name;
+
+    const podMessagePayload = embeds.createTournamentPodMessage(podData, finalists, finalsRoundNumber, true, finalsRoundNumber);
+    const playerPings = finalists.map(p => `<@${p.user_id}>`).join(' ');
+
+    const podMsg = await room.send({
+      content: `🏆 **GRAND FINALS — LOBBY #${finalsRoundNumber} IS LIVE!** ${playerPings}\n` +
+               `👑 <@${leader.user_id}> is the **Lobby Leader**. Please create the OUAG match and submit the 4-character code below.\n` +
+               `*(Players with 20+ Finals Points must finish 1st in this lobby to become Tournament Champion!)*`,
+      ...podMessagePayload
+    });
+
+    await queries.updatePodChannel(podId, room.id, podMsg.id);
+  } catch (err) {
+    await queries.rollbackFailedRound(roundId, tournamentId, tournament.finals_round_number || 0, tournament.stage, tournament.status, true);
+    throw err;
+  }
 
   if (prevRoundToCleanup) {
     await cleanupRoundPodRooms(guild, tournament, prevRoundToCleanup.id);
   }
 
-  const roundId = await queries.createRound(tournamentId, finalsRoundNumber, 1);
-  const leader = finalists[0];
-  const podId = await queries.createPod(roundId, tournamentId, 1, leader.user_id);
-
-  for (const f of finalists) {
-    await queries.addPodPlayer(podId, tournamentId, f.user_id, f.username);
-  }
-
-  const podData = await queries.getPodById(podId);
-  const room = await channelManager.createPodRoom(guild, tournament, podData, finalsRoundNumber, true, finalists);
-
-  const podMessagePayload = embeds.createTournamentPodMessage(podData, finalists, finalsRoundNumber, true, finalsRoundNumber);
-  const playerPings = finalists.map(p => `<@${p.user_id}>`).join(' ');
-
-  const podMsg = await room.send({
-    content: `🏆 **GRAND FINALS — LOBBY #${finalsRoundNumber} IS LIVE!** ${playerPings}\n` +
-             `👑 <@${leader.user_id}> is the **Lobby Leader**. Please create the OUAG match and submit the 4-character code below.\n` +
-             `*(Players with 20+ Finals Points must finish 1st in this lobby to become Tournament Champion!)*`,
-    ...podMessagePayload
-  });
-
-  await queries.updatePodChannel(podId, room.id, podMsg.id);
   webhookService.notifyWebhooks('finals_round_started').catch(() => null);
-  return { finalsRoundNumber, podId, roomName: room.name };
+  return { finalsRoundNumber, podId, roomName };
 }
 
 /**

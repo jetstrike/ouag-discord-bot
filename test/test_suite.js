@@ -995,6 +995,23 @@ async function runTests() {
   });
   assert.strictEqual(dropRes.status, 200);
   assert.strictEqual((await queries.getParticipant(webTourneyId, '500000000000000000')).status, 'dropped');
+  const droppedInPod = (await queries.getPodPlayers(webRound.pods[0].podId)).find(p => p.user_id === '500000000000000000');
+  assert.strictEqual(droppedInPod.placement, 6, 'Dropped player must be auto-assigned last place in active pod');
+
+  // Verify CSRF protections on /api/admin/action
+  const nonJsonRes = await fetch(`http://127.0.0.1:${webPort}/api/admin/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain', Cookie: ownerCookie },
+    body: '{}'
+  });
+  assert.strictEqual(nonJsonRes.status, 415, 'Non-JSON POST must be rejected with 415');
+
+  const crossOriginRes = await fetch(`http://127.0.0.1:${webPort}/api/admin/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example', Cookie: ownerCookie },
+    body: JSON.stringify({ guildId: e2eGuild.id, action: 'drop_player', userId: '500000000000000001' })
+  });
+  assert.strictEqual(crossOriginRes.status, 403, 'Cross-origin POST must be rejected with 403');
 
   // Test override_pod with placementsByUserId
   const webPodId = webRound.pods[0].podId;
@@ -1008,6 +1025,15 @@ async function runTests() {
   });
   assert.strictEqual(ovRes.status, 200);
   assert.strictEqual((await queries.getPodById(webPodId)).status, 'completed');
+
+  // Verify completeRound is atomic (second claim returns false)
+  const completedPodObj = await queries.getPodById(webPodId);
+  assert.strictEqual(await queries.completeRound(completedPodObj.round_id), false, 'Second completeRound claim must return false');
+
+  // Verify failed startRound rolls back current_round and partial pods
+  const failGuild = { ...e2eGuild, channels: { ...e2eGuild.channels, create: async () => { throw new Error('Missing Permissions'); } } };
+  await assert.rejects(() => tournamentManager.startRound(failGuild, webTourneyId), /Missing Permissions/);
+  assert.strictEqual((await queries.getTournamentById(webTourneyId)).current_round, 1, 'Failed startRound must roll back current_round');
 
   // Test cancel_tournament requires exact tournament name confirmation
   const badCancelRes = await fetch(`http://127.0.0.1:${webPort}/api/admin/action`, {
