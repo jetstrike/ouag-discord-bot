@@ -98,6 +98,9 @@ function createTablesSqlite() {
       results_channel_id TEXT,
       coordinator_role_id TEXT,
       points_config TEXT NOT NULL, -- JSON array of Swiss points
+      start_time INTEGER,
+      reminder_2h_sent INTEGER DEFAULT 0,
+      reminder_15m_sent INTEGER DEFAULT 0,
       created_by TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -112,7 +115,8 @@ function createTablesSqlite() {
       is_eligible_to_win INTEGER DEFAULT 0, -- 1 when >= 20 Finals Points
       matches_played INTEGER DEFAULT 0,
       first_places INTEGER DEFAULT 0,
-      status TEXT DEFAULT 'registered', -- registered, dropped, eliminated_cut, finalist
+      checked_in INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'registered', -- registered, dropped, auto_dropped, eliminated_cut, finalist
       registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (tournament_id, user_id)
     );
@@ -171,9 +175,13 @@ function createTablesSqlite() {
   // Migrate new columns if upgrading existing db
   ensureColumnSqlite('tournaments', 'stage', "TEXT DEFAULT 'registration'");
   ensureColumnSqlite('tournaments', 'finals_round_number', 'INTEGER DEFAULT 0');
+  ensureColumnSqlite('tournaments', 'start_time', 'INTEGER');
+  ensureColumnSqlite('tournaments', 'reminder_2h_sent', 'INTEGER DEFAULT 0');
+  ensureColumnSqlite('tournaments', 'reminder_15m_sent', 'INTEGER DEFAULT 0');
   ensureColumnSqlite('tournament_participants', 'carry_over_points', 'REAL DEFAULT 0.0');
   ensureColumnSqlite('tournament_participants', 'finals_points', 'REAL DEFAULT 0.0');
   ensureColumnSqlite('tournament_participants', 'is_eligible_to_win', 'INTEGER DEFAULT 0');
+  ensureColumnSqlite('tournament_participants', 'checked_in', 'INTEGER DEFAULT 0');
   ensureColumnSqlite('tournament_pod_players', 'carry_over_awarded', 'REAL DEFAULT 0.0');
   ensureColumnSqlite('tournament_pod_players', 'finals_points_awarded', 'REAL DEFAULT 0.0');
 
@@ -221,6 +229,9 @@ async function createTablesTiDB() {
       results_channel_id VARCHAR(64),
       coordinator_role_id VARCHAR(64),
       points_config TEXT NOT NULL,
+      start_time BIGINT,
+      reminder_2h_sent INT DEFAULT 0,
+      reminder_15m_sent INT DEFAULT 0,
       created_by VARCHAR(64) NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -237,6 +248,7 @@ async function createTablesTiDB() {
       is_eligible_to_win INT DEFAULT 0,
       matches_played INT DEFAULT 0,
       first_places INT DEFAULT 0,
+      checked_in INT DEFAULT 0,
       status VARCHAR(32) DEFAULT 'registered',
       registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (tournament_id, user_id)
@@ -302,6 +314,18 @@ async function createTablesTiDB() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  const ensureColumnTiDB = async (table, col, def) => {
+    const [rows] = await mysqlPool.query(`SHOW COLUMNS FROM \`${table}\` LIKE ?`, [col]);
+    if (rows.length === 0) {
+      await mysqlPool.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${col}\` ${def}`);
+    }
+  };
+  await ensureColumnTiDB('tournaments', 'start_time', 'BIGINT');
+  await ensureColumnTiDB('tournaments', 'reminder_2h_sent', 'INT DEFAULT 0');
+  await ensureColumnTiDB('tournaments', 'reminder_15m_sent', 'INT DEFAULT 0');
+  await ensureColumnTiDB('tournament_participants', 'checked_in', 'INT DEFAULT 0');
+
   console.log('[Database] TiDB / MySQL tables initialized.');
 }
 

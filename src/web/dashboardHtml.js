@@ -268,7 +268,9 @@ function renderDashboardHtml({ oauthConfigured }) {
           '<div><h2 style="margin:0 0 4px 0">' + esc(t.name) + ' <span class="badge">' + esc(t.status) + ' / ' + esc(t.stage) + '</span></h2>' +
           '<div class="muted">ID #' + t.id + ' • Round ' + t.current_round + '/' + t.total_rounds +
           (t.finals_round_number ? ' • Finals Lobby #' + t.finals_round_number : '') +
-          ' • Mode: ' + esc(t.channel_mode) + '</div></div>' +
+          ' • Mode: ' + esc(t.channel_mode) +
+          (t.start_time ? ' • Start: ' + esc(new Date(t.start_time * 1000).toLocaleString()) : '') +
+          '</div></div>' +
           '<div class="row">' +
           '<button onclick="doAction(\\'start_round\\')">Start / Next Swiss Round</button>' +
           '<button class="warn" onclick="doAction(\\'start_finals\\')">Start / Next Finals</button>' +
@@ -299,11 +301,36 @@ function renderDashboardHtml({ oauthConfigured }) {
           }).join('') + '</div>') + '</div>';
 
         const standings = g.standings || [];
+        if (t.start_time) {
+          const pendingAutoDrop = t.status === 'registration'
+            ? standings.filter(s => s.status === 'registered' && !s.checked_in)
+            : [];
+          const alreadyAutoDropped = standings.filter(s => s.status === 'auto_dropped');
+          const confirmedCount = standings.filter(s => s.status === 'registered' && s.checked_in).length;
+          html += '<div class="card">' +
+            '<h3 style="margin-top:0">Check-In &amp; Auto-Drop Watchlist</h3>' +
+            (t.status === 'registration'
+              ? '<p class="muted">Confirmed: <b>' + confirmedCount + '</b> • Will be auto-dropped when Round 1 starts if still unconfirmed (<b>' + pendingAutoDrop.length + '</b>):</p>' +
+                (pendingAutoDrop.length
+                  ? '<div class="row">' + pendingAutoDrop.map(s =>
+                      '<span class="badge" style="padding:5px 10px">' + esc(s.username) +
+                      ' <button class="sec" style="padding:2px 7px;font-size:11px;margin-left:4px" onclick=\\'doAction("checkin_player",{userId:' + JSON.stringify(s.user_id) + '})\\'>Confirm</button></span>'
+                    ).join('') + '</div>'
+                  : '<p class="muted">All registered players are checked in.</p>')
+              : '<p class="muted">Auto-Dropped at Round 1 Start (Missed Check-In): <b>' + alreadyAutoDropped.length + '</b></p>' +
+                (alreadyAutoDropped.length
+                  ? '<div class="row">' + alreadyAutoDropped.map(s => '<span class="badge">' + esc(s.username) + '</span>').join('') + '</div>'
+                  : '<p class="muted">None.</p>')) +
+            '</div>';
+        }
+
         html += '<div class="card"><h3 style="margin-top:0">Standings (' + standings.length + ')</h3>' +
-          '<table><thead><tr><th>#</th><th>Player</th><th>Status</th><th>Swiss</th><th>Carry-Over</th><th>Finals</th><th>1sts</th><th>Action</th></tr></thead><tbody>' +
+          '<table><thead><tr><th>#</th><th>Player</th><th>Status</th>' + (t.start_time ? '<th>Check-In</th>' : '') + '<th>Swiss</th><th>Carry-Over</th><th>Finals</th><th>1sts</th><th>Action</th></tr></thead><tbody>' +
           standings.map((s, idx) =>
             '<tr><td>' + (idx + 1) + '</td><td>' + esc(s.username) + (s.is_eligible_to_win ? ' 🎯' : '') + '</td>' +
-            '<td><span class="badge">' + esc(s.status) + '</span></td><td>' + s.points + '</td><td>' + s.carry_over_points + '</td>' +
+            '<td><span class="badge">' + esc(s.status) + '</span></td>' +
+            (t.start_time ? '<td>' + (s.checked_in ? '<span class="badge completed">Confirmed</span>' : '<span class="badge started">Unconfirmed</span>') + '</td>' : '') +
+            '<td>' + s.points + '</td><td>' + s.carry_over_points + '</td>' +
             '<td>' + s.finals_points + '</td><td>' + s.first_places + '</td>' +
             '<td>' + (s.status === 'registered' || s.status === 'finalist'
               ? '<button class="danger" onclick=\\'openDropModal(' + JSON.stringify(s.user_id) + ',' + JSON.stringify(s.username).replace(/'/g, '&#39;') + ')\\'>Drop</button>' : '') +

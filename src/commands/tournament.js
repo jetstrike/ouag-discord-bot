@@ -4,6 +4,7 @@ const embeds = require('../utils/embeds');
 const tournamentManager = require('../managers/tournamentManager');
 const channelManager = require('../managers/channelManager');
 const webhookService = require('../services/webhookService');
+const { parseScheduledTime } = require('../utils/timeParser');
 const config = require('../config');
 
 const builder = new SlashCommandBuilder()
@@ -40,6 +41,20 @@ const builder = new SlashCommandBuilder()
       )
       .addRoleOption(opt =>
         opt.setName('coordinator_role').setDescription('Role permitted to coordinate and override matches')
+      )
+      .addStringOption(opt =>
+        opt.setName('start_time').setDescription('Optional scheduled start (YYYY-MM-DD HH:MM, e.g. 2026-12-05 18:00)')
+      )
+      .addStringOption(opt =>
+        opt
+          .setName('timezone')
+          .setDescription('Timezone for start_time (default: Central Time)')
+          .addChoices(
+            { name: 'Eastern (ET)', value: 'America/New_York' },
+            { name: 'Central (CT)', value: 'America/Chicago' },
+            { name: 'Pacific (PT)', value: 'America/Los_Angeles' },
+            { name: 'UTC', value: 'UTC' }
+          )
       )
   )
   .addSubcommand(sub =>
@@ -158,6 +173,17 @@ async function handleCreate(interaction, guild) {
   const resultsChannel = options.getChannel('results_channel');
   const category = options.getChannel('category');
   const coordinatorRole = options.getRole('coordinator_role');
+  const startTimeRaw = options.getString('start_time');
+  const timezone = options.getString('timezone') || 'America/Chicago';
+
+  let startTime = null;
+  if (startTimeRaw) {
+    try {
+      startTime = parseScheduledTime(startTimeRaw, timezone);
+    } catch (err) {
+      return await interaction.editReply(`❌ ${err.message}`);
+    }
+  }
 
   const tournamentId = await queries.createTournament({
     guildId: guild.id,
@@ -169,6 +195,7 @@ async function handleCreate(interaction, guild) {
     resultsChannelId: resultsChannel?.id || channel?.id || interaction.channelId,
     coordinatorRoleId: coordinatorRole?.id,
     pointsConfig: config.TOURNAMENT_RULES.SWISS_POINTS,
+    startTime,
     createdBy: interaction.user.id
   });
 
@@ -355,7 +382,7 @@ async function handle(interaction, guild) {
 
     for (let i = 0; i < count; i++) {
       const botNum = startNum + i;
-      await queries.registerParticipant(activeTourney.id, `mock_bot_${Date.now()}_${botNum}`, `Bot_${botNum}`);
+      await queries.registerParticipant(activeTourney.id, `mock_bot_${Date.now()}_${botNum}`, `Bot_${botNum}`, 1);
     }
 
     const totalParticipants = await queries.getParticipants(activeTourney.id, true);

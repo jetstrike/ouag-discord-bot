@@ -318,6 +318,11 @@ function createWebServer(client) {
           await podManager.handlePlayerDrop(guild, tourney, String(body.userId || ''));
           return sendJson(res, 200, { message: 'Player dropped from tournament.' });
         }
+        if (action === 'checkin_player') {
+          await queries.setParticipantCheckedIn(tourney.id, String(body.userId || ''), 1);
+          webhookService.notifyWebhooks('player_checked_in').catch(() => null);
+          return sendJson(res, 200, { message: 'Player marked as checked in.' });
+        }
 
         // Pod-scoped actions
         const podId = parseInt(body.podId, 10);

@@ -1111,6 +1111,63 @@ async function runTests() {
   assert.strictEqual(pReset.first_places, 0, 'first_places must be rolled back to 0 on pod restart');
   console.log('  ✅ Completed pod override & restart score rollback verified.');
 
+  // 16. Scheduled Start Time, 2h Check-In, 15m Warning & Auto-Drop Unconfirmed
+  console.log('\n[Test 16] Testing Scheduled Start, Reminders & Auto-Drop Unconfirmed...');
+  const { parseScheduledTime, formatMentionChunks } = require('../src/utils/timeParser');
+  const reminderService = require('../src/services/reminderService');
+
+  const parsedTs = parseScheduledTime('2026-12-05 18:00', 'America/Chicago');
+  assert.strictEqual(parsedTs, Math.floor(Date.UTC(2026, 11, 6, 0, 0, 0) / 1000), 'Central Standard Time 18:00 must convert to 00:00 UTC next day');
+  const chunks = formatMentionChunks(Array.from({ length: 120 }, (_, i) => `1000000000000000${String(i).padStart(2, '0')}`));
+  assert(chunks.length >= 2 && chunks.every(c => c.length <= 1900), 'Mention chunks must split below Discord 2000-char limit');
+
+  const schedCh = e2eGuild._makeChannel({ name: 'scheduled-tourney', type: ChannelType.GuildText });
+  await slashCommands.handleSlashCommand(createMockInteraction({
+    guild: e2eGuild, channel: schedCh, user: adminUser, isAdmin: true,
+    commandName: 'tournament', subcommand: 'create',
+    optionValues: {
+      name: 'Scheduled Cup',
+      channel_mode: 'thread',
+      start_time: '2026-12-05 18:00',
+      timezone: 'America/Chicago'
+    }
+  }));
+  const schedTourney = await queries.getActiveTournament(e2eGuild.id);
+  assert.strictEqual(schedTourney.start_time, parsedTs);
+
+  // Register 5 real players + 1 unconfirmed player
+  const schedUsers = Array.from({ length: 6 }, (_, i) => ({
+    id: `70000000000000000${i}`,
+    username: `SchedP${i}`
+  }));
+  for (const u of schedUsers) {
+    await handleTournamentButton(createMockInteraction({
+      guild: e2eGuild, channel: schedCh, user: u, customId: `tourney_reg_${schedTourney.id}`
+    }));
+  }
+
+  // Trigger 2h reminder (at start_time - 7000s) and 15m reminder (at start_time - 800s)
+  await reminderService.processPendingReminders(e2eGuild.client, parsedTs - 7000);
+  assert.strictEqual((await queries.getTournamentById(schedTourney.id)).reminder_2h_sent, 1, '2h reminder flag must be set');
+  assert.strictEqual((await queries.getTournamentById(schedTourney.id)).reminder_15m_sent, 0, '15m reminder must not fire at 2h mark');
+
+  await reminderService.processPendingReminders(e2eGuild.client, parsedTs - 800);
+  assert.strictEqual((await queries.getTournamentById(schedTourney.id)).reminder_15m_sent, 1, '15m reminder flag must be set');
+
+  // Check in first 5 players, leave 6th unconfirmed
+  for (let i = 0; i < 5; i++) {
+    await handleTournamentButton(createMockInteraction({
+      guild: e2eGuild, channel: schedCh, user: schedUsers[i], customId: `tourney_checkin_${schedTourney.id}`
+    }));
+  }
+
+  // Starting Round 1 auto-drops the 6th unconfirmed player and pairs the 5 confirmed players
+  const schedR1 = await tournamentManager.startRound(e2eGuild, schedTourney.id);
+  assert.strictEqual(schedR1.pods[0].size, 5, 'Only the 5 confirmed players must be paired into Round 1');
+  const unconfirmedDrop = await queries.getParticipant(schedTourney.id, schedUsers[5].id);
+  assert.strictEqual(unconfirmedDrop.status, 'auto_dropped', 'Unconfirmed player must be marked auto_dropped');
+  console.log('  ✅ Scheduled start, 2h/15m reminders, check-in, and Round 1 auto-drop verified.');
+
   console.log('\n======================================================');
   console.log('🎉 ALL TESTS PASSED! FULL CHEKHOV’S GUM FORMAT VERIFIED!');
   console.log('======================================================\n');

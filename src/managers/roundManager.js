@@ -46,7 +46,26 @@ async function startRound(guild, tournamentId) {
     }
   }
 
-  const participants = await queries.getParticipants(tournamentId, true);
+  let participants = await queries.getParticipants(tournamentId, true);
+
+  // If Round 1 has a scheduled start_time, auto-drop unconfirmed players before pairing
+  if (nextRoundNumber === 1 && tournament.start_time) {
+    const confirmed = participants.filter(p => p.checked_in === 1);
+    if (confirmed.length < config.MIN_LOBBY_SIZE) {
+      throw new Error(`Need at least ${config.MIN_LOBBY_SIZE} checked-in players to start Round 1. Confirmed: ${confirmed.length}/${participants.length}.`);
+    }
+    const autoDropped = await queries.autoDropUnconfirmedParticipants(tournamentId);
+    if (autoDropped.length > 0 && guild && tournament.tournament_channel_id) {
+      const ch = await guild.channels.fetch(tournament.tournament_channel_id).catch(() => null);
+      if (ch) {
+        await ch.send({
+          content: `⏰ **Check-In Closed**: Auto-dropped **${autoDropped.length}** unconfirmed player(s) before Round 1.`
+        }).catch(() => null);
+      }
+    }
+    participants = confirmed;
+  }
+
   if (participants.length < config.MIN_LOBBY_SIZE) {
     throw new Error(`Need at least ${config.MIN_LOBBY_SIZE} registered players to start a round. Currently active: ${participants.length}.`);
   }

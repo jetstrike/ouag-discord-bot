@@ -410,11 +410,16 @@ function createFinalsBreakEmbed(tournament, top6Finalists) {
  * Creates Tournament Registration Embed.
  */
 function createRegistrationEmbed(tournament, participantCount = 0) {
+  const startLine = tournament.start_time
+    ? `🕒 **Scheduled Start**: <t:${tournament.start_time}:F> (<t:${tournament.start_time}:R>)\n*(Check-in opens 2 hours before start; unconfirmed players are auto-dropped at Round 1 start.)*\n\n`
+    : '';
+
   const embed = new EmbedBuilder()
     .setTitle(`🏆 ${tournament.name} — Registration Open!`)
     .setColor(config.COLORS.PRIMARY)
     .setDescription(
       `Welcome to **${tournament.name}**!\n\n` +
+      startLine +
       `**Tournament Structure** (Chekhov's Gum Format):\n` +
       `• **Swiss Stage**: 4 Swiss Rounds with random seeding & balanced lobby sizes.\n` +
       `• **Round 3 Cut**: Bottom third of players eliminated after Round 3.\n` +
@@ -495,6 +500,43 @@ function createIssueChannelEmbed(tournament, user) {
   return { content: `👋 <@${user.id}> ${coordPing}`, embeds: [embed], components: [row] };
 }
 
+/**
+ * Creates the 2-hour check-in or 15-minute warning embed with Confirm / Drop buttons.
+ */
+function createCheckInReminderEmbed(tournament, type, confirmedCount, totalCount) {
+  const isTwoHour = type === '2h';
+  const embed = new EmbedBuilder()
+    .setTitle(isTwoHour
+      ? `⏰ 2-Hour Check-In Open — ${tournament.name}`
+      : `🚨 15-Minute Warning — ${tournament.name}`)
+    .setColor(isTwoHour ? config.COLORS.PRIMARY : config.COLORS.WARNING)
+    .setDescription(
+      (isTwoHour
+        ? `**${tournament.name}** starts <t:${tournament.start_time}:R> (<t:${tournament.start_time}:F>).\n\n` +
+          `Please click **Confirm / Check In** below to keep your spot! Unconfirmed players will be **auto-dropped** when Round 1 starts.`
+        : `**${tournament.name}** starts in **15 minutes** (<t:${tournament.start_time}:R>)!\n\n` +
+          `Last call: if you haven't clicked **Confirm / Check In** yet, confirm now or you will be **auto-dropped** when Round 1 starts.`) +
+      `\n\n✅ **Confirmed:** ${confirmedCount} / ${totalCount} players`
+    )
+    .setFooter({ text: `Tournament ID: ${tournament.id}` })
+    .setTimestamp();
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`tourney_checkin_${tournament.id}`)
+      .setLabel('Confirm / Check In')
+      .setStyle(ButtonStyle.Success)
+      .setEmoji('✅'),
+    new ButtonBuilder()
+      .setCustomId(`tourney_drop_${tournament.id}`)
+      .setLabel('Drop')
+      .setStyle(ButtonStyle.Danger)
+      .setEmoji('🚪')
+  );
+
+  return { embeds: [embed], components: [row] };
+}
+
 module.exports = {
   createCasualQueueMessage,
   createTournamentPodMessage,
@@ -503,5 +545,6 @@ module.exports = {
   createStandingsComponents,
   createFinalsBreakEmbed,
   createRegistrationEmbed,
-  createIssueChannelEmbed
+  createIssueChannelEmbed,
+  createCheckInReminderEmbed
 };

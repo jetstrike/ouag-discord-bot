@@ -18,18 +18,19 @@ async function createTournament({
   resultsChannelId,
   coordinatorRoleId,
   pointsConfig = config.TOURNAMENT_RULES.SWISS_POINTS,
+  startTime = null,
   createdBy
 }) {
   const result = await db.run(
     `INSERT INTO tournaments (
       guild_id, name, status, stage, current_round, total_rounds, finals_round_number,
       channel_mode, category_id, tournament_channel_id, results_channel_id,
-      coordinator_role_id, points_config, created_by
-    ) VALUES (?, ?, 'registration', 'registration', 0, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+      coordinator_role_id, points_config, start_time, created_by
+    ) VALUES (?, ?, 'registration', 'registration', 0, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       guildId, name, rounds, channelMode,
       categoryId || null, tournamentChannelId, resultsChannelId || null, coordinatorRoleId || null,
-      JSON.stringify(pointsConfig), createdBy
+      JSON.stringify(pointsConfig), startTime || null, createdBy
     ]
   );
   return result.insertId;
@@ -79,21 +80,62 @@ async function claimNextFinalsRound(tournamentId, expectedFinalsRound, nextFinal
   return res.changes > 0;
 }
 
-async function registerParticipant(tournamentId, userId, username) {
+async function getTournamentsPendingReminders() {
+  const rows = await db.all(
+    `SELECT * FROM tournaments
+     WHERE status = 'registration' AND start_time IS NOT NULL AND (reminder_2h_sent = 0 OR reminder_15m_sent = 0)`
+  );
+  return rows.map(parseTournamentRow);
+}
+
+async function markReminderSent(tournamentId, type) {
+  const col = type === '2h' ? 'reminder_2h_sent' : 'reminder_15m_sent';
+  const res = await db.run(
+    `UPDATE tournaments SET ${col} = 1 WHERE id = ? AND ${col} = 0`,
+    [tournamentId]
+  );
+  return res.changes > 0;
+}
+
+async function registerParticipant(tournamentId, userId, username, checkedIn = 0) {
   const existing = await getParticipant(tournamentId, userId);
   if (existing) {
     const res = await db.run(
-      `UPDATE tournament_participants SET status = 'registered', username = ? WHERE tournament_id = ? AND user_id = ?`,
-      [username, tournamentId, userId]
+      `UPDATE tournament_participants SET status = 'registered', username = ?, checked_in = CASE WHEN ? = 1 THEN 1 ELSE checked_in END WHERE tournament_id = ? AND user_id = ?`,
+      [username, checkedIn ? 1 : 0, tournamentId, userId]
     );
     return res.changes > 0;
   }
 
   await db.run(
-    `INSERT INTO tournament_participants (tournament_id, user_id, username, status) VALUES (?, ?, ?, 'registered')`,
-    [tournamentId, userId, username]
+    `INSERT INTO tournament_participants (tournament_id, user_id, username, checked_in, status) VALUES (?, ?, ?, ?, 'registered')`,
+    [tournamentId, userId, username, checkedIn ? 1 : 0]
   );
   return true;
+}
+
+async function setParticipantCheckedIn(tournamentId, userId, checkedIn = 1) {
+  const res = await db.run(
+    `UPDATE tournament_participants SET checked_in = ? WHERE tournament_id = ? AND user_id = ? AND status = 'registered'`,
+    [checkedIn ? 1 : 0, tournamentId, userId]
+  );
+  return res.changes > 0;
+}
+
+async function autoDropUnconfirmedParticipants(tournamentId) {
+  const unconfirmed = await db.all(
+    `SELECT user_id, username FROM tournament_participants
+     WHERE tournament_id = ? AND status = 'registered' AND (checked_in = 0 OR checked_in IS NULL)`,
+    [tournamentId]
+  );
+  if (unconfirmed.length > 0) {
+    await db.run(
+      `UPDATE tournament_participants SET status = 'auto_dropped'
+       WHERE tournament_id = ? AND status = 'registered' AND (checked_in = 0 OR checked_in IS NULL)`,
+      [tournamentId]
+    );
+  }
+  return unconfirmed;
 }
 
 async function unregisterParticipant(tournamentId, userId) {
@@ -441,7 +483,7 @@ async function getStandings(tournamentId, stage = 'swiss') {
   }
 
   return await db.all(
-    `SELECT user_id, username, points, carry_over_points, finals_points, is_eligible_to_win, matches_played, first_places, status
+    `SELECT user_id, username, points, carry_over_points, finals_points, is_eligible_to_win, matches_played, first_places, checked_in, status
      FROM tournament_participants
      WHERE tournament_id = ?
      ORDER BY points DESC, carry_over_points DESC, first_places DESC, username ASC`,
@@ -495,10 +537,14 @@ module.exports = {
   getActiveTournament,
   getRecentTournament,
   getAllRunningTournaments,
+  getTournamentsPendingReminders,
+  markReminderSent,
   updateTournamentStatus,
   updateTournamentStage,
   claimNextFinalsRound,
   registerParticipant,
+  setParticipantCheckedIn,
+  autoDropUnconfirmedParticipants,
   unregisterParticipant,
   getParticipants,
   getParticipant,

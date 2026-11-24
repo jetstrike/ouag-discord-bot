@@ -5,6 +5,7 @@ const { commands, handleSlashCommand } = require('./commands/slashCommands');
 const { handleCasualButton, handleCasualModal } = require('./interactions/casualHandlers');
 const { handleTournamentButton, handleTournamentModal } = require('./interactions/tournamentHandlers');
 const { startWebServer } = require('./web/server');
+const { startReminderLoop } = require('./services/reminderService');
 
 // Initialize Discord Client (only Guilds intent needed for Slash Commands, Buttons, and Modals)
 const client = new Client({
@@ -58,6 +59,8 @@ client.once(Events.ClientReady, async () => {
   } else {
     console.warn('[Notice] DISCORD_TOKEN or CLIENT_ID missing in .env. Slash commands will register when configured.');
   }
+
+  startReminderLoop(client);
 });
 
 // Interaction Event

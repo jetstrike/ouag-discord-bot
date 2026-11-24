@@ -42,6 +42,27 @@ async function handleTournamentButton(interaction) {
     });
   }
 
+  // 1b. Check-In / Reconfirmation
+  if (customId.startsWith('tourney_checkin_')) {
+    const tournamentId = parseInt(customId.replace('tourney_checkin_', ''), 10);
+    const tournament = await queries.getTournamentById(tournamentId);
+    if (!tournament || tournament.status !== 'registration') {
+      return interaction.reply({ content: '⚠️ Check-in is closed for this tournament.', flags: MessageFlags.Ephemeral });
+    }
+
+    const participant = await queries.getParticipant(tournamentId, interaction.user.id);
+    if (!participant || participant.status !== 'registered') {
+      return interaction.reply({ content: '⚠️ You must be registered for this tournament to check in.', flags: MessageFlags.Ephemeral });
+    }
+
+    await queries.setParticipantCheckedIn(tournamentId, interaction.user.id, 1);
+    webhookService.notifyWebhooks('player_checked_in').catch(() => null);
+    return interaction.reply({
+      content: `✅ You are checked in for **${tournament.name}**! Good luck in Round 1.`,
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
   // 2. Tournament Withdrawal
   if (customId.startsWith('tourney_withdraw_')) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
