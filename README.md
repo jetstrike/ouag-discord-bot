@@ -77,6 +77,10 @@ npm run pm2:logs
 | `/tournament cancel` | Coordinator | Cancels the active tournament, cleans up rooms, and deletes its DB records. |
 | `/ouag-help` | Everyone | Shows a quick summary of casual and tournament rules. |
 
+## User Guide
+
+See [USER_GUIDE.md](./USER_GUIDE.md) for player instructions, coordinator workflows, and Admin Web Dashboard usage.
+
 ## Privacy
 
 See [PRIVACY_POLICY.md](./PRIVACY_POLICY.md) for what data the bot stores and how to remove it.
